@@ -358,18 +358,8 @@ function initApp(DATA) {
   function renderPayments() {
     noteEl.hidden = true;
     const p = DATA.payments;
-    // Merge live-month projected into the ledger for the running-total view
+    // Ledger reflects COMPLETED months only (matches the aggregate above)
     const ledger = Object.assign({}, p.season_ledger);
-    for (const m of months) {
-      const md = p.by_month[m];
-      if (!md || md.status !== "live") continue;
-      // Apply same math as completed months: last -$10, 2nd-last -$20, best +$20, 2nd-best +$10, ties split
-      const nL = md.losers.length, nSL = md.second_losers.length, nB = md.bests.length, nSB = md.second_bests.length;
-      for (const t of md.losers)        ledger[t] = (ledger[t]||0) + (-10/nL);
-      for (const t of md.second_losers) ledger[t] = (ledger[t]||0) + (-20/nSL);
-      for (const t of md.bests)         ledger[t] = (ledger[t]||0) + (nSL>0 ? 20/nB : 0);
-      for (const t of md.second_bests)  ledger[t] = (ledger[t]||0) + (nL>0  ? 10/nSB : 0);
-    }
     const ledgerEntries = Object.entries(ledger).sort((a,b) => a[1] - b[1]);
     const allTeamNames = DATA.months[months[0]].teams.map(t => t.team_name);
     const missing = allTeamNames.filter(n => !(n in ledger));
@@ -514,8 +504,8 @@ function initApp(DATA) {
       </div>
       <div class="season-ledger">
         <div class="ledger-head">
-          <h3>Season ledger — running net through ${monthLabel(months[months.length - 1])}</h3>
-          <div class="sub">Includes projected July payment if season ends today. Sums to zero (peer-to-peer).</div>
+          <h3>Season ledger — running net (completed months only)</h3>
+          <div class="sub">Excludes the live current month. Sums to zero (peer-to-peer).</div>
         </div>
         ${ledgerRows}
       </div>
