@@ -205,28 +205,53 @@
   const contentEl = document.getElementById("content");
   const noteEl = document.getElementById("month-note");
 
+  // URL-hash routing. Slug map: 2026-Mar-Apr → mar-apr, 2026-May → may, etc.
+  const slugFor = m => ({
+    "2026-Mar-Apr": "mar-apr",
+    "2026-May": "may",
+    "2026-Jun": "jun",
+    "2026-Jul": "jul",
+  })[m] || m.toLowerCase();
+  const monthBySlug = Object.fromEntries(months.map(m => [slugFor(m), m]));
+
+  const monthButtons = {};
   months.forEach((m, i) => {
     const b = document.createElement("button");
-    b.className = "tab" + (i === months.length - 1 ? " active" : "");
+    b.className = "tab";
+    b.setAttribute("data-slug", slugFor(m));
     const liveDot = isLive(m) ? ' <span style="color:var(--warn)">●</span>' : "";
     b.innerHTML = `${monthLabel(m)}${liveDot} <span class="tab-count">${DATA.months[m].teams.length} teams</span>`;
-    b.addEventListener("click", () => {
-      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-      b.classList.add("active");
-      renderMonth(m);
-    });
+    b.addEventListener("click", () => { location.hash = "#" + slugFor(m); });
     nav.appendChild(b);
+    monthButtons[m] = b;
   });
   // Payments tab
   const payTab = document.createElement("button");
   payTab.className = "tab money";
+  payTab.setAttribute("data-slug", "payments");
   payTab.innerHTML = `💰 Payments`;
-  payTab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-    payTab.classList.add("active");
-    renderPayments();
-  });
+  payTab.addEventListener("click", () => { location.hash = "#payments"; });
   nav.appendChild(payTab);
+
+  // Route based on current hash. Default = latest month.
+  function route() {
+    const slug = (location.hash || "").replace(/^#/, "").toLowerCase();
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    if (slug === "payments") {
+      payTab.classList.add("active");
+      renderPayments();
+    } else if (slug in monthBySlug) {
+      const m = monthBySlug[slug];
+      monthButtons[m].classList.add("active");
+      renderMonth(m);
+    } else {
+      const m = months[months.length - 1];
+      monthButtons[m].classList.add("active");
+      renderMonth(m);
+    }
+    window.scrollTo({top: 0});
+  }
+  window.addEventListener("hashchange", route);
 
   function renderMonth(m) {
     contentEl.innerHTML = "";
@@ -486,6 +511,6 @@
 
   function esc(s) { return String(s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
-  renderMonth(months[months.length - 1]);
+  route();
 })();
 </script>
