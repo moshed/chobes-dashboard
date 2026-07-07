@@ -160,14 +160,16 @@
 <script>
 (function(){
   const DATA = JSON.parse(document.getElementById("data").textContent);
-  const MONTH_ORDER = ["2026-Mar-Apr", "2026-May", "2026-Jun", "2026-Jul"];
-  const months = MONTH_ORDER.filter(m => m in DATA.months);
-  const monthLabel = m => ({
-    "2026-Mar-Apr": "Mar–Apr",
-    "2026-May": "May",
-    "2026-Jun": "June",
-    "2026-Jul": "July",
-  })[m] || m;
+  const MONTH_NAME_TABLE = {"Jan":"January","Feb":"February","Mar":"March","Apr":"April","May":"May","Jun":"June","Jul":"July","Aug":"August","Sep":"September","Oct":"October","Nov":"November","Dec":"December"};
+  // Sort months chronologically: parse start date from DATA.months[m].start
+  const months = Object.keys(DATA.months).sort((a,b) =>
+    (DATA.months[a].start || "").localeCompare(DATA.months[b].start || ""));
+  const monthLabel = m => {
+    // "2026-Mar-Apr" → "Mar–Apr"; "2026-May" → "May"; "2026-Aug" → "August"; etc.
+    const raw = m.replace(/^\d{4}-/, "");
+    if (raw.includes("-")) return raw.replace("-", "–");
+    return MONTH_NAME_TABLE[raw] || raw;
+  };
   const monthRange = m => `${DATA.months[m].start} → ${DATA.months[m].end}`;
   const isLive = m => DATA.months[m].status === "live";
   const monthNote = m => {
@@ -205,13 +207,8 @@
   const contentEl = document.getElementById("content");
   const noteEl = document.getElementById("month-note");
 
-  // URL-hash routing. Slug map: 2026-Mar-Apr → mar-apr, 2026-May → may, etc.
-  const slugFor = m => ({
-    "2026-Mar-Apr": "mar-apr",
-    "2026-May": "may",
-    "2026-Jun": "jun",
-    "2026-Jul": "jul",
-  })[m] || m.toLowerCase();
+  // URL-hash routing. Slug = lowercase month key without year prefix ("2026-Aug" → "aug", "2026-Mar-Apr" → "mar-apr").
+  const slugFor = m => m.replace(/^\d{4}-/, "").toLowerCase();
   const monthBySlug = Object.fromEntries(months.map(m => [slugFor(m), m]));
 
   const monthButtons = {};
@@ -258,12 +255,13 @@
     const n = monthNote(m);
     if (n) { noteEl.textContent = n; noteEl.hidden = false; } else noteEl.hidden = true;
 
-    const teams = DATA.months[m].teams;
+    // Data is stored worst-first; display best-first (#1 = top team)
+    const teams = [...DATA.months[m].teams].reverse();
     const N = teams.length;
     teams.forEach((t, idx) => {
       const rank = idx + 1;
-      const isWorst = rank === 1;
-      const isBest = rank === N;
+      const isBest = rank === 1;
+      const isWorst = rank === N;
       const el = document.createElement("article");
       el.className = "team";
       const rankCls = isWorst ? " worst" : (isBest ? " best" : "");
