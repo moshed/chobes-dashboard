@@ -1,0 +1,431 @@
+<title>Chobes Roto Inspector</title>
+<style>
+  :root {
+    --bg:#0e141f; --panel:#151d2c; --panel-2:#1a2334; --panel-3:#212c40;
+    --border:#263349; --border-soft:#1e2739;
+    --text:#e6ecf3; --text-dim:#93a1b7; --text-mute:#667790;
+    --accent:#6ea3ff; --worst:#f2603a; --best:#48d597; --warn:#ffb44a;
+    --gain:#48d597; --loss:#f2603a;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 var(--sans); -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1180px; margin:0 auto; padding:32px 20px 80px; }
+  header.pg { padding-bottom:20px; border-bottom:1px solid var(--border-soft); margin-bottom:24px; }
+  .eyebrow { color:var(--accent); font:600 11px/1 var(--mono); letter-spacing:0.14em; text-transform:uppercase; margin-bottom:10px; }
+  h1 { margin:0 0 6px; font:700 26px/1.15 var(--sans); letter-spacing:-0.01em; text-wrap:balance; }
+  .sub { color:var(--text-dim); font-size:13.5px; margin:0; }
+  .sub .you { color:var(--best); font-weight:600; }
+  .source-note { color:var(--text-mute); font:500 11px/1.4 var(--mono); margin-top:8px; }
+  nav { display:flex; gap:4px; margin:24px 0 16px; border-bottom:1px solid var(--border-soft); position:sticky; top:0; background:var(--bg); z-index:5; flex-wrap:wrap; }
+  .tab { padding:10px 16px; font:600 13px/1 var(--sans); color:var(--text-dim); background:none; border:none; cursor:pointer; border-bottom:2px solid transparent; }
+  .tab:hover { color:var(--text); }
+  .tab.active { color:var(--text); border-bottom-color:var(--accent); }
+  .tab.money.active { border-bottom-color:var(--warn); }
+  .tab-count { color:var(--text-mute); font-family:var(--mono); font-size:11px; margin-left:4px; }
+  .month-note { background:var(--panel); border:1px solid var(--border); border-left:3px solid var(--warn); border-radius:8px; padding:10px 14px; margin:0 0 20px; font-size:13px; color:var(--text-dim); }
+  .team { background:var(--panel); border:1px solid var(--border); border-radius:12px; margin-bottom:8px; overflow:hidden; }
+  .team.mine { border-color:var(--best); box-shadow:0 0 0 1px rgba(72,213,151,0.2); }
+  .team-head { display:grid; grid-template-columns:32px 1fr auto auto; gap:14px; align-items:center; padding:12px 16px; cursor:pointer; user-select:none; }
+  .team-head:hover { background:var(--panel-2); }
+  .rank { font:700 15px/1 var(--mono); text-align:center; color:var(--text-mute); }
+  .rank.worst { color:var(--worst); }
+  .rank.best { color:var(--best); }
+  .team-name { font:600 15px/1.2 var(--sans); }
+  .team-name .badge { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:999px; font:600 10px/1.6 var(--mono); letter-spacing:0.08em; text-transform:uppercase; background:rgba(72,213,151,0.14); color:var(--best); border:1px solid rgba(72,213,151,0.3); }
+  .head-cats { font:12.5px/1 var(--mono); color:var(--text-dim); font-variant-numeric:tabular-nums; display:flex; gap:12px; margin-top:3px; flex-wrap:wrap; }
+  .head-cats .lab { color:var(--text-mute); }
+  .roto { font:700 22px/1 var(--mono); color:var(--text); }
+  .roto-label { font:500 10px/1 var(--mono); letter-spacing:0.1em; text-transform:uppercase; color:var(--text-mute); margin-top:3px; text-align:right; }
+  .chev { color:var(--text-mute); transition:transform 0.15s ease; font-size:14px; }
+  .team.open .chev { transform:rotate(90deg); }
+  .team-body { display:none; border-top:1px solid var(--border-soft); }
+  .team.open .team-body { display:block; }
+  .cat-strip { display:grid; grid-template-columns:repeat(10, 1fr); gap:1px; background:var(--border-soft); padding:1px; border-bottom:1px solid var(--border-soft); }
+  .cat { background:var(--panel-2); padding:10px 8px; text-align:center; }
+  .cat .cat-lab { font:600 10px/1 var(--mono); letter-spacing:0.08em; text-transform:uppercase; color:var(--text-mute); margin-bottom:5px; }
+  .cat .cat-val { font:600 14px/1 var(--mono); font-variant-numeric:tabular-nums; color:var(--text); }
+  .cat .cat-pts { font:500 10px/1 var(--mono); color:var(--text-mute); margin-top:3px; }
+  .cat.rank-high .cat-pts { color:var(--best); }
+  .cat.rank-low .cat-pts { color:var(--worst); }
+  .days { padding:14px 16px; }
+  .days-title { font:600 11px/1 var(--mono); letter-spacing:0.1em; text-transform:uppercase; color:var(--text-mute); margin:0 0 12px; }
+  .day { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:8px; margin-bottom:6px; overflow:hidden; }
+  .day-head { display:grid; grid-template-columns:90px 1fr auto; gap:12px; align-items:center; padding:8px 12px; cursor:pointer; }
+  .day-head:hover { background:var(--panel-3); }
+  .day-date { font:600 12px/1 var(--mono); color:var(--text); }
+  .day-cats { font:11.5px/1 var(--mono); color:var(--text-dim); font-variant-numeric:tabular-nums; display:grid; grid-template-columns:repeat(10, 1fr); gap:8px; }
+  .day-cats .cat-cell { display:flex; flex-direction:column; align-items:flex-start; gap:2px; }
+  .day-cats .cat-cell .lab { color:var(--text-mute); font-size:9px; letter-spacing:0.08em; text-transform:uppercase; }
+  .day-cats .cat-cell .val { color:var(--text); font-weight:600; }
+  .day-chev { color:var(--text-mute); font-size:12px; transition:transform 0.15s ease; }
+  .day-body { display:none; padding:10px 12px 12px; border-top:1px solid var(--border-soft); background:var(--panel-3); }
+  .day.open .day-body { display:block; }
+  .day.open .day-chev { transform:rotate(90deg); }
+  .stat-line { font:11.5px/1.6 var(--mono); font-variant-numeric:tabular-nums; color:var(--text-dim); margin-bottom:6px; }
+  .stat-line .grp { color:var(--text-mute); font-weight:600; letter-spacing:0.06em; text-transform:uppercase; font-size:10px; margin-right:8px; }
+  .stat-line .pair { display:inline-block; margin-right:14px; }
+  .stat-line .pair .lab { color:var(--text-mute); margin-right:4px; }
+  .stat-line .pair .val { color:var(--text); }
+
+  /* Payments tab */
+  .pay-summary { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:24px; }
+  .pay-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px 16px; }
+  .pay-card .lab { color:var(--text-mute); font:600 10px/1 var(--mono); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px; }
+  .pay-card .val { color:var(--text); font:700 24px/1 var(--mono); font-variant-numeric:tabular-nums; }
+  .pay-card .note { color:var(--text-dim); font:400 11px/1.4 var(--sans); margin-top:6px; }
+  .pay-rules { background:var(--panel); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:12px 16px; margin-bottom:20px; font-size:13px; color:var(--text-dim); }
+  .pay-rules b { color:var(--text); }
+  .pay-month { background:var(--panel); border:1px solid var(--border); border-radius:12px; margin-bottom:14px; overflow:hidden; }
+  .pay-month-head { padding:12px 16px; border-bottom:1px solid var(--border-soft); background:var(--panel-2); }
+  .pay-month-head h3 { margin:0; font:700 15px/1.2 var(--sans); }
+  .pay-month-head .range { color:var(--text-mute); font:500 11px/1 var(--mono); margin-top:4px; }
+  .pay-tie { background:rgba(255,180,74,0.08); border-top:1px solid rgba(255,180,74,0.3); border-bottom:1px solid rgba(255,180,74,0.3); padding:8px 16px; font:500 12px/1.4 var(--sans); color:var(--warn); }
+  table.pay { width:100%; border-collapse:collapse; }
+  table.pay th, table.pay td { padding:8px 16px; text-align:left; font-size:13px; }
+  table.pay thead th { color:var(--text-mute); font:600 11px/1 var(--mono); letter-spacing:0.08em; text-transform:uppercase; padding-top:10px; padding-bottom:8px; border-bottom:1px solid var(--border-soft); }
+  table.pay td { border-bottom:1px solid var(--border-soft); font-variant-numeric:tabular-nums; }
+  table.pay tr:last-child td { border-bottom:none; }
+  table.pay td.right, table.pay th.right { text-align:right; font-family:var(--mono); }
+  table.pay td.role { font:600 10px/1 var(--mono); letter-spacing:0.08em; text-transform:uppercase; }
+  table.pay td.role.last { color:var(--worst); }
+  table.pay td.role.sec-last { color:var(--warn); }
+  table.pay td.role.best { color:var(--best); }
+  table.pay td.role.sec-best { color:var(--accent); }
+  .money-pos { color:var(--gain); }
+  .money-neg { color:var(--loss); }
+  .money-zero { color:var(--text-mute); }
+  .season-ledger { background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; margin-top:8px; }
+  .ledger-head { padding:12px 16px; border-bottom:1px solid var(--border-soft); background:var(--panel-2); }
+  .ledger-head h3 { margin:0; font:700 15px/1.2 var(--sans); }
+  .ledger-head .sub { color:var(--text-dim); font-size:12px; margin-top:4px; }
+  .ledger-row { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border-soft); }
+  .ledger-row:last-child { border-bottom:none; }
+  .ledger-row.mine { background:rgba(72,213,151,0.06); }
+  .ledger-name { font:600 14px/1.2 var(--sans); }
+  .ledger-amt { font:700 18px/1 var(--mono); font-variant-numeric:tabular-nums; }
+  .ledger-owes { color:var(--text-mute); font:500 11px/1.4 var(--mono); margin-top:3px; }
+
+  @media (max-width:900px) {
+    .day-cats { grid-template-columns:repeat(5, 1fr); }
+    .pay-summary { grid-template-columns:1fr; }
+  }
+  @media (max-width:720px) {
+    .cat-strip { grid-template-columns:repeat(5, 1fr); }
+    .team-head { grid-template-columns:28px 1fr auto; gap:10px; }
+    .team-head .chev { display:none; }
+    .roto { font-size:18px; }
+    table.pay { font-size:12px; }
+    table.pay th, table.pay td { padding:6px 10px; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="pg">
+    <div class="eyebrow">Chobes Shadynasty II · Roto inspector · Yahoo + MLB API</div>
+    <h1>Monthly roto — worst team each period, if each month were its own season</h1>
+    <p class="sub">10-cat: R · HR · RBI · SB · OBP + W · SV · K · ERA · WHIP. Rosters via Yahoo API (per-day <b>selected_position</b>), stats via MLB Stats API game logs, aggregated locally. Your team (<span class="you">I Own Ronald Acuna For Life</span>) is highlighted.</p>
+    <p class="source-note">Only the 10 roto cats earn points. AB/H/BB/IP/ER etc. are shown in expanded view for validation only.</p>
+  </header>
+  <nav id="tabs"></nav>
+  <div id="month-note" class="month-note" hidden></div>
+  <main id="content"></main>
+</div>
+
+<script id="data" type="application/json">{"months": {"2026-Mar-Apr": {"start": "2026-03-25", "end": "2026-04-30", "status": "completed", "teams": [{"team_key": "469.l.11742.t.5", "team_name": "The Bazzana Stand", "totals": {"r": 193, "hr": 50, "rbi": 165, "sb": 29, "k": 200, "w": 10, "sv": 7, "obp": 0.32, "era": 4.88, "whip": 1.42, "_cumulative_at_end": {"r": 193, "hr": 50, "rbi": 165, "sb": 29, "obp": 0.32, "w": 10, "sv": 7, "k": 200, "era": 4.88, "whip": 1.42}}, "pts": {"r_pts": 4.5, "hr_pts": 5, "rbi_pts": 1, "sb_pts": 5, "obp_pts": 4, "w_pts": 1, "sv_pts": 1, "k_pts": 2, "era_pts": 2, "whip_pts": 2, "total_pts": 27.5}}, {"team_key": "469.l.11742.t.9", "team_name": "Nuggets", "totals": {"r": 192, "hr": 51, "rbi": 186, "sb": 30, "k": 199, "w": 14, "sv": 8, "obp": 0.319, "era": 4.27, "whip": 1.26, "_cumulative_at_end": {"r": 192, "hr": 51, "rbi": 186, "sb": 30, "obp": 0.319, "w": 14, "sv": 8, "k": 199, "era": 4.27, "whip": 1.26}}, "pts": {"r_pts": 2.5, "hr_pts": 6.5, "rbi_pts": 6, "sb_pts": 6, "obp_pts": 3, "w_pts": 5.5, "sv_pts": 2, "k_pts": 1, "era_pts": 3, "whip_pts": 6.5, "total_pts": 42}}, {"team_key": "469.l.11742.t.12", "team_name": "The Potato \ud83e\udd54", "totals": {"r": 193, "hr": 58, "rbi": 193, "sb": 23, "k": 244, "w": 13, "sv": 13, "obp": 0.314, "era": 5.08, "whip": 1.48, "_cumulative_at_end": {"r": 193, "hr": 58, "rbi": 193, "sb": 23, "obp": 0.314, "w": 13, "sv": 13, "k": 244, "era": 5.08, "whip": 1.48}}, "pts": {"r_pts": 4.5, "hr_pts": 10, "rbi_pts": 8, "sb_pts": 3, "obp_pts": 1.5, "w_pts": 3.5, "sv_pts": 7.5, "k_pts": 4, "era_pts": 1, "whip_pts": 1, "total_pts": 44}}, {"team_key": "469.l.11742.t.8", "team_name": "Monroe Kajun", "totals": {"r": 186, "hr": 47, "rbi": 183, "sb": 44, "k": 250, "w": 11, "sv": 9, "obp": 0.337, "era": 4.22, "whip": 1.33, "_cumulative_at_end": {"r": 186, "hr": 47, "rbi": 183, "sb": 44, "obp": 0.337, "w": 11, "sv": 9, "k": 250, "era": 4.22, "whip": 1.33}}, "pts": {"r_pts": 1, "hr_pts": 1, "rbi_pts": 5, "sb_pts": 10, "obp_pts": 10, "w_pts": 2, "sv_pts": 3, "k_pts": 5, "era_pts": 4, "whip_pts": 3, "total_pts": 44}}, {"team_key": "469.l.11742.t.3", "team_name": "Built to Lose", "totals": {"r": 204, "hr": 51, "rbi": 182, "sb": 22, "k": 261, "w": 14, "sv": 18, "obp": 0.314, "era": 3.81, "whip": 1.32, "_cumulative_at_end": {"r": 204, "hr": 51, "rbi": 182, "sb": 22, "obp": 0.314, "w": 14, "sv": 18, "k": 261, "era": 3.81, "whip": 1.32}}, "pts": {"r_pts": 7, "hr_pts": 6.5, "rbi_pts": 4, "sb_pts": 1.5, "obp_pts": 1.5, "w_pts": 5.5, "sv_pts": 11, "k_pts": 6, "era_pts": 6, "whip_pts": 4, "total_pts": 53}}, {"team_key": "469.l.11742.t.6", "team_name": "Wyatt Power", "totals": {"r": 199, "hr": 49, "rbi": 177, "sb": 38, "k": 280, "w": 24, "sv": 12, "obp": 0.325, "era": 3.49, "whip": 1.21, "_cumulative_at_end": {"r": 199, "hr": 49, "rbi": 177, "sb": 38, "obp": 0.325, "w": 24, "sv": 12, "k": 280, "era": 3.49, "whip": 1.21}}, "pts": {"r_pts": 6, "hr_pts": 4, "rbi_pts": 3, "sb_pts": 7.5, "obp_pts": 5, "w_pts": 11, "sv_pts": 5, "k_pts": 8, "era_pts": 10.5, "whip_pts": 8.5, "total_pts": 68.5}}, {"team_key": "469.l.11742.t.2", "team_name": "2020 champ", "totals": {"r": 206, "hr": 54, "rbi": 205, "sb": 24, "k": 204, "w": 13, "sv": 12, "obp": 0.326, "era": 3.49, "whip": 1.11, "_cumulative_at_end": {"r": 206, "hr": 54, "rbi": 205, "sb": 24, "obp": 0.326, "w": 13, "sv": 12, "k": 204, "era": 3.49, "whip": 1.11}}, "pts": {"r_pts": 8, "hr_pts": 9, "rbi_pts": 9, "sb_pts": 4, "obp_pts": 6, "w_pts": 3.5, "sv_pts": 5, "k_pts": 3, "era_pts": 10.5, "whip_pts": 12, "total_pts": 70}}, {"team_key": "469.l.11742.t.10", "team_name": "GIANT", "totals": {"r": 209, "hr": 48, "rbi": 174, "sb": 49, "k": 297, "w": 16, "sv": 13, "obp": 0.333, "era": 3.76, "whip": 1.27, "_cumulative_at_end": {"r": 209, "hr": 48, "rbi": 174, "sb": 49, "obp": 0.333, "w": 16, "sv": 13, "k": 297, "era": 3.76, "whip": 1.27}}, "pts": {"r_pts": 9, "hr_pts": 2.5, "rbi_pts": 2, "sb_pts": 12, "obp_pts": 9, "w_pts": 7, "sv_pts": 7.5, "k_pts": 9, "era_pts": 7, "whip_pts": 5, "total_pts": 70}}, {"team_key": "469.l.11742.t.4", "team_name": "4eva is a 4 letter word", "totals": {"r": 235, "hr": 53, "rbi": 226, "sb": 22, "k": 267, "w": 17, "sv": 14, "obp": 0.36, "era": 3.73, "whip": 1.21, "_cumulative_at_end": {"r": 235, "hr": 53, "rbi": 226, "sb": 22, "obp": 0.36, "w": 17, "sv": 14, "k": 267, "era": 3.73, "whip": 1.21}}, "pts": {"r_pts": 10.5, "hr_pts": 8, "rbi_pts": 12, "sb_pts": 1.5, "obp_pts": 12, "w_pts": 8, "sv_pts": 9, "k_pts": 7, "era_pts": 9, "whip_pts": 8.5, "total_pts": 85.5}}, {"team_key": "469.l.11742.t.1", "team_name": "I Own Ronald Acuna For Life", "totals": {"r": 192, "hr": 48, "rbi": 187, "sb": 48, "k": 419, "w": 27, "sv": 17, "obp": 0.328, "era": 3.03, "whip": 1.15, "_cumulative_at_end": {"r": 192, "hr": 48, "rbi": 187, "sb": 48, "obp": 0.328, "w": 27, "sv": 17, "k": 419, "era": 3.03, "whip": 1.15}}, "pts": {"r_pts": 2.5, "hr_pts": 2.5, "rbi_pts": 7, "sb_pts": 11, "obp_pts": 7, "w_pts": 12, "sv_pts": 10, "k_pts": 12, "era_pts": 12, "whip_pts": 11, "total_pts": 87}}, {"team_key": "469.l.11742.t.7", "team_name": "Lucky Ladies", "totals": {"r": 235, "hr": 74, "rbi": 220, "sb": 38, "k": 315, "w": 18, "sv": 12, "obp": 0.33, "era": 3.75, "whip": 1.17, "_cumulative_at_end": {"r": 235, "hr": 74, "rbi": 220, "sb": 38, "obp": 0.33, "w": 18, "sv": 12, "k": 315, "era": 3.75, "whip": 1.17}}, "pts": {"r_pts": 10.5, "hr_pts": 12, "rbi_pts": 10, "sb_pts": 7.5, "obp_pts": 8, "w_pts": 9, "sv_pts": 5, "k_pts": 11, "era_pts": 8, "whip_pts": 10, "total_pts": 91}}, {"team_key": "469.l.11742.t.11", "team_name": "The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85", "totals": {"r": 239, "hr": 61, "rbi": 224, "sb": 43, "k": 309, "w": 19, "sv": 19, "obp": 0.356, "era": 3.87, "whip": 1.26, "_cumulative_at_end": {"r": 239, "hr": 61, "rbi": 224, "sb": 43, "obp": 0.356, "w": 19, "sv": 19, "k": 309, "era": 3.87, "whip": 1.26}}, "pts": {"r_pts": 12, "hr_pts": 11, "rbi_pts": 11, "sb_pts": 9, "obp_pts": 11, "w_pts": 10, "sv_pts": 12, "k_pts": 10, "era_pts": 5, "whip_pts": 6.5, "total_pts": 97.5}}]}, "2026-May": {"start": "2026-05-01", "end": "2026-05-31", "status": "completed", "teams": [{"team_key": "469.l.11742.t.9", "team_name": "Nuggets", "totals": {"r": 137, "hr": 32, "rbi": 142, "sb": 17, "k": 223, "w": 16, "sv": 0, "obp": 0.309, "era": 4.33, "whip": 1.24, "_cumulative_at_end": {"r": 329, "hr": 83, "rbi": 328, "sb": 47, "obp": 0.309, "w": 30, "sv": 8, "k": 422, "era": 4.33, "whip": 1.24}}, "pts": {"r_pts": 1, "hr_pts": 1, "rbi_pts": 2.5, "sb_pts": 2, "obp_pts": 2, "w_pts": 6.5, "sv_pts": 1, "k_pts": 6, "era_pts": 2, "whip_pts": 7, "total_pts": 31}}, {"team_key": "469.l.11742.t.12", "team_name": "The Potato \ud83e\udd54", "totals": {"r": 150, "hr": 49, "rbi": 142, "sb": 23, "k": 212, "w": 12, "sv": 13, "obp": 0.306, "era": 4.41, "whip": 1.34, "_cumulative_at_end": {"r": 343, "hr": 107, "rbi": 335, "sb": 46, "obp": 0.306, "w": 25, "sv": 26, "k": 456, "era": 4.41, "whip": 1.34}}, "pts": {"r_pts": 2, "hr_pts": 8, "rbi_pts": 2.5, "sb_pts": 4, "obp_pts": 1, "w_pts": 4, "sv_pts": 9.5, "k_pts": 3, "era_pts": 1, "whip_pts": 1, "total_pts": 36}}, {"team_key": "469.l.11742.t.5", "team_name": "The Bazzana Stand", "totals": {"r": 173, "hr": 43, "rbi": 132, "sb": 39, "k": 262, "w": 17, "sv": 7, "obp": 0.328, "era": 4.15, "whip": 1.28, "_cumulative_at_end": {"r": 366, "hr": 93, "rbi": 297, "sb": 68, "obp": 0.328, "w": 27, "sv": 14, "k": 462, "era": 4.15, "whip": 1.28}}, "pts": {"r_pts": 6, "hr_pts": 3, "rbi_pts": 1, "sb_pts": 11, "obp_pts": 4.5, "w_pts": 8, "sv_pts": 4, "k_pts": 10, "era_pts": 3, "whip_pts": 3.5, "total_pts": 54}}, {"team_key": "469.l.11742.t.3", "team_name": "Built to Lose", "totals": {"r": 175, "hr": 44, "rbi": 161, "sb": 29, "k": 226, "w": 11, "sv": 11, "obp": 0.313, "era": 4.04, "whip": 1.27, "_cumulative_at_end": {"r": 379, "hr": 95, "rbi": 343, "sb": 51, "obp": 0.313, "w": 25, "sv": 29, "k": 487, "era": 4.04, "whip": 1.27}}, "pts": {"r_pts": 7, "hr_pts": 4.5, "rbi_pts": 7, "sb_pts": 8, "obp_pts": 3, "w_pts": 2.5, "sv_pts": 8, "k_pts": 7, "era_pts": 5, "whip_pts": 5, "total_pts": 57}}, {"team_key": "469.l.11742.t.2", "team_name": "2020 champ", "totals": {"r": 169, "hr": 45, "rbi": 151, "sb": 20, "k": 208, "w": 16, "sv": 9, "obp": 0.328, "era": 3.17, "whip": 1.1, "_cumulative_at_end": {"r": 375, "hr": 99, "rbi": 356, "sb": 44, "obp": 0.328, "w": 29, "sv": 21, "k": 412, "era": 3.17, "whip": 1.1}}, "pts": {"r_pts": 5, "hr_pts": 6, "rbi_pts": 5, "sb_pts": 3, "obp_pts": 4.5, "w_pts": 6.5, "sv_pts": 5, "k_pts": 2, "era_pts": 11, "whip_pts": 12, "total_pts": 60}}, {"team_key": "469.l.11742.t.4", "team_name": "4eva is a 4 letter word", "totals": {"r": 187, "hr": 58, "rbi": 183, "sb": 14, "k": 218, "w": 10, "sv": 6, "obp": 0.342, "era": 3.92, "whip": 1.28, "_cumulative_at_end": {"r": 422, "hr": 111, "rbi": 409, "sb": 36, "obp": 0.342, "w": 27, "sv": 20, "k": 485, "era": 3.92, "whip": 1.28}}, "pts": {"r_pts": 8, "hr_pts": 11.5, "rbi_pts": 10, "sb_pts": 1, "obp_pts": 11.5, "w_pts": 1, "sv_pts": 3, "k_pts": 4.5, "era_pts": 6, "whip_pts": 3.5, "total_pts": 60}}, {"team_key": "469.l.11742.t.10", "team_name": "GIANT", "totals": {"r": 196, "hr": 44, "rbi": 163, "sb": 39, "k": 231, "w": 19, "sv": 4, "obp": 0.334, "era": 4.11, "whip": 1.29, "_cumulative_at_end": {"r": 405, "hr": 92, "rbi": 337, "sb": 88, "obp": 0.334, "w": 35, "sv": 17, "k": 528, "era": 4.11, "whip": 1.29}}, "pts": {"r_pts": 9.5, "hr_pts": 4.5, "rbi_pts": 8, "sb_pts": 11, "obp_pts": 7, "w_pts": 10, "sv_pts": 2, "k_pts": 8, "era_pts": 4, "whip_pts": 2, "total_pts": 66}}, {"team_key": "469.l.11742.t.6", "team_name": "Wyatt Power", "totals": {"r": 164, "hr": 35, "rbi": 157, "sb": 28, "k": 253, "w": 19, "sv": 10, "obp": 0.335, "era": 3.68, "whip": 1.18, "_cumulative_at_end": {"r": 363, "hr": 84, "rbi": 334, "sb": 66, "obp": 0.335, "w": 43, "sv": 22, "k": 533, "era": 3.68, "whip": 1.18}}, "pts": {"r_pts": 3, "hr_pts": 2, "rbi_pts": 6, "sb_pts": 6.5, "obp_pts": 8.5, "w_pts": 10, "sv_pts": 6.5, "k_pts": 9, "era_pts": 9, "whip_pts": 8, "total_pts": 68.5}}, {"team_key": "469.l.11742.t.7", "team_name": "Lucky Ladies", "totals": {"r": 209, "hr": 47, "rbi": 186, "sb": 39, "k": 193, "w": 13, "sv": 10, "obp": 0.341, "era": 3.85, "whip": 1.16, "_cumulative_at_end": {"r": 444, "hr": 121, "rbi": 406, "sb": 77, "obp": 0.341, "w": 31, "sv": 22, "k": 508, "era": 3.85, "whip": 1.16}}, "pts": {"r_pts": 11, "hr_pts": 7, "rbi_pts": 11, "sb_pts": 11, "obp_pts": 10, "w_pts": 5, "sv_pts": 6.5, "k_pts": 1, "era_pts": 7, "whip_pts": 9.5, "total_pts": 79}}, {"team_key": "469.l.11742.t.1", "team_name": "I Own Ronald Acuna For Life", "totals": {"r": 166, "hr": 52, "rbi": 150, "sb": 28, "k": 298, "w": 19, "sv": 15, "obp": 0.335, "era": 3.13, "whip": 1.16, "_cumulative_at_end": {"r": 358, "hr": 100, "rbi": 337, "sb": 76, "obp": 0.335, "w": 46, "sv": 32, "k": 717, "era": 3.13, "whip": 1.16}}, "pts": {"r_pts": 4, "hr_pts": 9, "rbi_pts": 4, "sb_pts": 6.5, "obp_pts": 8.5, "w_pts": 10, "sv_pts": 11, "k_pts": 11, "era_pts": 12, "whip_pts": 9.5, "total_pts": 85.5}}, {"team_key": "469.l.11742.t.11", "team_name": "The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85", "totals": {"r": 221, "hr": 58, "rbi": 203, "sb": 35, "k": 218, "w": 11, "sv": 13, "obp": 0.342, "era": 3.79, "whip": 1.25, "_cumulative_at_end": {"r": 460, "hr": 119, "rbi": 427, "sb": 78, "obp": 0.342, "w": 30, "sv": 32, "k": 527, "era": 3.79, "whip": 1.25}}, "pts": {"r_pts": 12, "hr_pts": 11.5, "rbi_pts": 12, "sb_pts": 9, "obp_pts": 11.5, "w_pts": 2.5, "sv_pts": 9.5, "k_pts": 4.5, "era_pts": 8, "whip_pts": 6, "total_pts": 86.5}}, {"team_key": "469.l.11742.t.8", "team_name": "Monroe Kajun", "totals": {"r": 196, "hr": 53, "rbi": 177, "sb": 26, "k": 307, "w": 29, "sv": 23, "obp": 0.332, "era": 3.31, "whip": 1.14, "_cumulative_at_end": {"r": 382, "hr": 100, "rbi": 360, "sb": 70, "obp": 0.332, "w": 40, "sv": 32, "k": 557, "era": 3.31, "whip": 1.14}}, "pts": {"r_pts": 9.5, "hr_pts": 10, "rbi_pts": 9, "sb_pts": 5, "obp_pts": 6, "w_pts": 12, "sv_pts": 12, "k_pts": 12, "era_pts": 10, "whip_pts": 11, "total_pts": 96.5}}]}, "2026-Jun": {"start": "2026-06-01", "end": "2026-06-30", "status": "completed", "teams": [{"team_key": "469.l.11742.t.9", "team_name": "Nuggets", "totals": {"r": 157, "hr": 47, "rbi": 135, "sb": 20, "k": 145, "w": 6, "sv": 0, "obp": 0.313, "era": 4.62, "whip": 1.28, "_cumulative_at_end": {"r": 486, "hr": 130, "rbi": 463, "sb": 67, "obp": 0.313, "w": 36, "sv": 8, "k": 567, "era": 4.62, "whip": 1.28}}, "pts": {"r_pts": 3, "hr_pts": 4.5, "rbi_pts": 2, "sb_pts": 2, "obp_pts": 1, "w_pts": 1, "sv_pts": 1, "k_pts": 1, "era_pts": 1, "whip_pts": 2.5, "total_pts": 19}}, {"team_key": "469.l.11742.t.5", "team_name": "The Bazzana Stand", "totals": {"r": 147, "hr": 38, "rbi": 133, "sb": 17, "k": 167, "w": 7, "sv": 5, "obp": 0.323, "era": 4.36, "whip": 1.28, "_cumulative_at_end": {"r": 513, "hr": 131, "rbi": 430, "sb": 85, "obp": 0.323, "w": 34, "sv": 19, "k": 629, "era": 4.36, "whip": 1.28}}, "pts": {"r_pts": 1, "hr_pts": 1, "rbi_pts": 1, "sb_pts": 1, "obp_pts": 4, "w_pts": 2, "sv_pts": 4, "k_pts": 2, "era_pts": 2, "whip_pts": 2.5, "total_pts": 20.5}}, {"team_key": "469.l.11742.t.3", "team_name": "Built to Lose", "totals": {"r": 173, "hr": 52, "rbi": 183, "sb": 26, "k": 198, "w": 8, "sv": 10, "obp": 0.314, "era": 4.22, "whip": 1.31, "_cumulative_at_end": {"r": 552, "hr": 147, "rbi": 526, "sb": 77, "obp": 0.314, "w": 33, "sv": 39, "k": 685, "era": 4.22, "whip": 1.31}}, "pts": {"r_pts": 5, "hr_pts": 7, "rbi_pts": 9, "sb_pts": 8, "obp_pts": 2, "w_pts": 3, "sv_pts": 6.5, "k_pts": 3, "era_pts": 3, "whip_pts": 1, "total_pts": 47.5}}, {"team_key": "469.l.11742.t.10", "team_name": "GIANT", "totals": {"r": 188, "hr": 45, "rbi": 138, "sb": 27, "k": 209, "w": 12, "sv": 3, "obp": 0.327, "era": 4.05, "whip": 1.27, "_cumulative_at_end": {"r": 593, "hr": 137, "rbi": 475, "sb": 115, "obp": 0.327, "w": 47, "sv": 20, "k": 737, "era": 4.05, "whip": 1.27}}, "pts": {"r_pts": 10, "hr_pts": 2, "rbi_pts": 3, "sb_pts": 9.5, "obp_pts": 7, "w_pts": 5, "sv_pts": 2.5, "k_pts": 4, "era_pts": 5, "whip_pts": 4, "total_pts": 52}}, {"team_key": "469.l.11742.t.12", "team_name": "The Potato \ud83e\udd54", "totals": {"r": 175, "hr": 46, "rbi": 171, "sb": 23, "k": 272, "w": 23, "sv": 11, "obp": 0.318, "era": 3.96, "whip": 1.26, "_cumulative_at_end": {"r": 518, "hr": 153, "rbi": 506, "sb": 69, "obp": 0.318, "w": 48, "sv": 37, "k": 728, "era": 3.96, "whip": 1.26}}, "pts": {"r_pts": 6, "hr_pts": 3, "rbi_pts": 6, "sb_pts": 5.5, "obp_pts": 3, "w_pts": 12, "sv_pts": 8, "k_pts": 12, "era_pts": 6, "whip_pts": 5.5, "total_pts": 67}}, {"team_key": "469.l.11742.t.6", "team_name": "Wyatt Power", "totals": {"r": 155, "hr": 47, "rbi": 159, "sb": 38, "k": 267, "w": 15, "sv": 13, "obp": 0.326, "era": 3.88, "whip": 1.22, "_cumulative_at_end": {"r": 518, "hr": 131, "rbi": 493, "sb": 104, "obp": 0.326, "w": 58, "sv": 35, "k": 800, "era": 3.88, "whip": 1.22}}, "pts": {"r_pts": 2, "hr_pts": 4.5, "rbi_pts": 4, "sb_pts": 12, "obp_pts": 5.5, "w_pts": 9, "sv_pts": 9, "k_pts": 10, "era_pts": 7, "whip_pts": 7, "total_pts": 70}}, {"team_key": "469.l.11742.t.1", "team_name": "I Own Ronald Acuna For Life", "totals": {"r": 165, "hr": 59, "rbi": 160, "sb": 24, "k": 223, "w": 14, "sv": 8, "obp": 0.326, "era": 3.26, "whip": 1.18, "_cumulative_at_end": {"r": 523, "hr": 159, "rbi": 497, "sb": 100, "obp": 0.326, "w": 60, "sv": 40, "k": 940, "era": 3.26, "whip": 1.18}}, "pts": {"r_pts": 4, "hr_pts": 9, "rbi_pts": 5, "sb_pts": 7, "obp_pts": 5.5, "w_pts": 7, "sv_pts": 5, "k_pts": 7, "era_pts": 12, "whip_pts": 9, "total_pts": 70.5}}, {"team_key": "469.l.11742.t.2", "team_name": "2020 champ", "totals": {"r": 180, "hr": 58, "rbi": 179, "sb": 27, "k": 210, "w": 11, "sv": 3, "obp": 0.332, "era": 3.4, "whip": 1.13, "_cumulative_at_end": {"r": 555, "hr": 157, "rbi": 535, "sb": 71, "obp": 0.332, "w": 40, "sv": 24, "k": 622, "era": 3.4, "whip": 1.13}}, "pts": {"r_pts": 7, "hr_pts": 8, "rbi_pts": 8, "sb_pts": 9.5, "obp_pts": 8, "w_pts": 4, "sv_pts": 2.5, "k_pts": 5, "era_pts": 10, "whip_pts": 12, "total_pts": 74}}, {"team_key": "469.l.11742.t.4", "team_name": "4eva is a 4 letter word", "totals": {"r": 191, "hr": 48, "rbi": 186, "sb": 23, "k": 215, "w": 14, "sv": 21, "obp": 0.341, "era": 4.08, "whip": 1.26, "_cumulative_at_end": {"r": 613, "hr": 159, "rbi": 595, "sb": 59, "obp": 0.341, "w": 41, "sv": 41, "k": 700, "era": 4.08, "whip": 1.26}}, "pts": {"r_pts": 11, "hr_pts": 6, "rbi_pts": 11, "sb_pts": 5.5, "obp_pts": 12, "w_pts": 7, "sv_pts": 11, "k_pts": 6, "era_pts": 4, "whip_pts": 5.5, "total_pts": 79}}, {"team_key": "469.l.11742.t.7", "team_name": "Lucky Ladies", "totals": {"r": 185, "hr": 60, "rbi": 211, "sb": 22, "k": 225, "w": 20, "sv": 10, "obp": 0.339, "era": 3.73, "whip": 1.16, "_cumulative_at_end": {"r": 629, "hr": 181, "rbi": 617, "sb": 99, "obp": 0.339, "w": 51, "sv": 32, "k": 733, "era": 3.73, "whip": 1.16}}, "pts": {"r_pts": 8, "hr_pts": 10, "rbi_pts": 12, "sb_pts": 3.5, "obp_pts": 9.5, "w_pts": 11, "sv_pts": 6.5, "k_pts": 8, "era_pts": 9, "whip_pts": 10, "total_pts": 87.5}}, {"team_key": "469.l.11742.t.11", "team_name": "The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85", "totals": {"r": 194, "hr": 64, "rbi": 176, "sb": 22, "k": 271, "w": 17, "sv": 20, "obp": 0.34, "era": 3.87, "whip": 1.19, "_cumulative_at_end": {"r": 654, "hr": 183, "rbi": 603, "sb": 100, "obp": 0.34, "w": 47, "sv": 52, "k": 798, "era": 3.87, "whip": 1.19}}, "pts": {"r_pts": 12, "hr_pts": 11, "rbi_pts": 7, "sb_pts": 3.5, "obp_pts": 11, "w_pts": 10, "sv_pts": 10, "k_pts": 11, "era_pts": 8, "whip_pts": 8, "total_pts": 91.5}}, {"team_key": "469.l.11742.t.8", "team_name": "Monroe Kajun", "totals": {"r": 187, "hr": 69, "rbi": 185, "sb": 37, "k": 233, "w": 14, "sv": 24, "obp": 0.339, "era": 3.3, "whip": 1.15, "_cumulative_at_end": {"r": 569, "hr": 169, "rbi": 545, "sb": 107, "obp": 0.339, "w": 54, "sv": 56, "k": 790, "era": 3.3, "whip": 1.15}}, "pts": {"r_pts": 9, "hr_pts": 12, "rbi_pts": 10, "sb_pts": 11, "obp_pts": 9.5, "w_pts": 7, "sv_pts": 12, "k_pts": 9, "era_pts": 11, "whip_pts": 11, "total_pts": 101.5}}]}, "2026-Jul": {"start": "2026-07-01", "end": "2026-07-06", "status": "live", "teams": [{"team_key": "469.l.11742.t.9", "team_name": "Nuggets", "totals": {"r": 36, "hr": 7, "rbi": 29, "sb": 1, "k": 18, "w": 1, "sv": 0, "obp": 0.313, "era": 4.63, "whip": 1.29, "_cumulative_at_end": {"r": 522, "hr": 137, "rbi": 492, "sb": 68, "obp": 0.313, "w": 37, "sv": 8, "k": 585, "era": 4.63, "whip": 1.29}}, "pts": {"r_pts": 6.5, "hr_pts": 2.5, "rbi_pts": 4, "sb_pts": 1.5, "obp_pts": 1, "w_pts": 2.5, "sv_pts": 2.5, "k_pts": 2, "era_pts": 1, "whip_pts": 2, "total_pts": 25.5}}, {"team_key": "469.l.11742.t.5", "team_name": "The Bazzana Stand", "totals": {"r": 31, "hr": 10, "rbi": 33, "sb": 1, "k": 19, "w": 1, "sv": 0, "obp": 0.321, "era": 4.35, "whip": 1.28, "_cumulative_at_end": {"r": 544, "hr": 141, "rbi": 463, "sb": 86, "obp": 0.321, "w": 35, "sv": 19, "k": 648, "era": 4.35, "whip": 1.28}}, "pts": {"r_pts": 3, "hr_pts": 7, "rbi_pts": 7.5, "sb_pts": 1.5, "obp_pts": 4, "w_pts": 2.5, "sv_pts": 2.5, "k_pts": 3, "era_pts": 2, "whip_pts": 3, "total_pts": 36}}, {"team_key": "469.l.11742.t.3", "team_name": "Built to Lose", "totals": {"r": 28, "hr": 8, "rbi": 27, "sb": 5, "k": 51, "w": 2, "sv": 1, "obp": 0.314, "era": 4.31, "whip": 1.32, "_cumulative_at_end": {"r": 580, "hr": 155, "rbi": 553, "sb": 82, "obp": 0.314, "w": 35, "sv": 40, "k": 736, "era": 4.31, "whip": 1.32}}, "pts": {"r_pts": 1, "hr_pts": 4, "rbi_pts": 2, "sb_pts": 5.5, "obp_pts": 2, "w_pts": 5.5, "sv_pts": 6, "k_pts": 10, "era_pts": 3, "whip_pts": 1, "total_pts": 40}}, {"team_key": "469.l.11742.t.10", "team_name": "GIANT", "totals": {"r": 44, "hr": 9, "rbi": 30, "sb": 4, "k": 26, "w": 2, "sv": 1, "obp": 0.328, "era": 4.03, "whip": 1.27, "_cumulative_at_end": {"r": 637, "hr": 146, "rbi": 505, "sb": 119, "obp": 0.328, "w": 49, "sv": 21, "k": 763, "era": 4.03, "whip": 1.27}}, "pts": {"r_pts": 10, "hr_pts": 5, "rbi_pts": 5, "sb_pts": 3.5, "obp_pts": 6.5, "w_pts": 5.5, "sv_pts": 6, "k_pts": 4, "era_pts": 5, "whip_pts": 4, "total_pts": 54.5}}, {"team_key": "469.l.11742.t.2", "team_name": "2020 champ", "totals": {"r": 30, "hr": 5, "rbi": 28, "sb": 7, "k": 34, "w": 3, "sv": 0, "obp": 0.332, "era": 3.59, "whip": 1.16, "_cumulative_at_end": {"r": 585, "hr": 162, "rbi": 563, "sb": 78, "obp": 0.332, "w": 43, "sv": 24, "k": 656, "era": 3.59, "whip": 1.16}}, "pts": {"r_pts": 2, "hr_pts": 1, "rbi_pts": 3, "sb_pts": 8, "obp_pts": 8, "w_pts": 8.5, "sv_pts": 2.5, "k_pts": 7, "era_pts": 10, "whip_pts": 10, "total_pts": 60}}, {"team_key": "469.l.11742.t.12", "team_name": "The Potato \ud83e\udd54", "totals": {"r": 35, "hr": 7, "rbi": 19, "sb": 7, "k": 55, "w": 4, "sv": 4, "obp": 0.319, "era": 3.88, "whip": 1.24, "_cumulative_at_end": {"r": 553, "hr": 160, "rbi": 525, "sb": 76, "obp": 0.319, "w": 52, "sv": 41, "k": 783, "era": 3.88, "whip": 1.24}}, "pts": {"r_pts": 5, "hr_pts": 2.5, "rbi_pts": 1, "sb_pts": 8, "obp_pts": 3, "w_pts": 11, "sv_pts": 9.5, "k_pts": 11, "era_pts": 8, "whip_pts": 6, "total_pts": 65}}, {"team_key": "469.l.11742.t.1", "team_name": "I Own Ronald Acuna For Life", "totals": {"r": 33, "hr": 15, "rbi": 39, "sb": 7, "k": 12, "w": 0, "sv": 2, "obp": 0.326, "era": 3.43, "whip": 1.2, "_cumulative_at_end": {"r": 556, "hr": 174, "rbi": 536, "sb": 107, "obp": 0.326, "w": 60, "sv": 42, "k": 952, "era": 3.43, "whip": 1.2}}, "pts": {"r_pts": 4, "hr_pts": 10, "rbi_pts": 9, "sb_pts": 8, "obp_pts": 5, "w_pts": 1, "sv_pts": 8, "k_pts": 1, "era_pts": 11, "whip_pts": 9, "total_pts": 66}}, {"team_key": "469.l.11742.t.4", "team_name": "4eva is a 4 letter word", "totals": {"r": 47, "hr": 17, "rbi": 53, "sb": 4, "k": 28, "w": 2, "sv": 4, "obp": 0.342, "era": 4.09, "whip": 1.26, "_cumulative_at_end": {"r": 660, "hr": 176, "rbi": 648, "sb": 63, "obp": 0.342, "w": 43, "sv": 45, "k": 728, "era": 4.09, "whip": 1.26}}, "pts": {"r_pts": 11, "hr_pts": 11, "rbi_pts": 12, "sb_pts": 3.5, "obp_pts": 12, "w_pts": 5.5, "sv_pts": 9.5, "k_pts": 5, "era_pts": 4, "whip_pts": 5, "total_pts": 78.5}}, {"team_key": "469.l.11742.t.6", "team_name": "Wyatt Power", "totals": {"r": 48, "hr": 19, "rbi": 48, "sb": 5, "k": 30, "w": 4, "sv": 0, "obp": 0.328, "era": 3.94, "whip": 1.22, "_cumulative_at_end": {"r": 566, "hr": 150, "rbi": 541, "sb": 109, "obp": 0.328, "w": 62, "sv": 35, "k": 830, "era": 3.94, "whip": 1.22}}, "pts": {"r_pts": 12, "hr_pts": 12, "rbi_pts": 10, "sb_pts": 5.5, "obp_pts": 6.5, "w_pts": 11, "sv_pts": 2.5, "k_pts": 6, "era_pts": 7, "whip_pts": 7, "total_pts": 79.5}}, {"team_key": "469.l.11742.t.11", "team_name": "The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85", "totals": {"r": 43, "hr": 10, "rbi": 32, "sb": 8, "k": 64, "w": 4, "sv": 5, "obp": 0.34, "era": 3.96, "whip": 1.21, "_cumulative_at_end": {"r": 697, "hr": 193, "rbi": 635, "sb": 108, "obp": 0.34, "w": 51, "sv": 57, "k": 862, "era": 3.96, "whip": 1.21}}, "pts": {"r_pts": 9, "hr_pts": 7, "rbi_pts": 6, "sb_pts": 10, "obp_pts": 9.5, "w_pts": 11, "sv_pts": 11, "k_pts": 12, "era_pts": 6, "whip_pts": 8, "total_pts": 89.5}}, {"team_key": "469.l.11742.t.8", "team_name": "Monroe Kajun", "totals": {"r": 36, "hr": 10, "rbi": 33, "sb": 9, "k": 46, "w": 3, "sv": 1, "obp": 0.341, "era": 3.26, "whip": 1.14, "_cumulative_at_end": {"r": 605, "hr": 179, "rbi": 578, "sb": 116, "obp": 0.341, "w": 57, "sv": 57, "k": 836, "era": 3.26, "whip": 1.14}}, "pts": {"r_pts": 6.5, "hr_pts": 7, "rbi_pts": 7.5, "sb_pts": 11, "obp_pts": 11, "w_pts": 8.5, "sv_pts": 6, "k_pts": 8, "era_pts": 12, "whip_pts": 12, "total_pts": 89.5}}, {"team_key": "469.l.11742.t.7", "team_name": "Lucky Ladies", "totals": {"r": 40, "hr": 13, "rbi": 50, "sb": 12, "k": 48, "w": 2, "sv": 6, "obp": 0.34, "era": 3.7, "whip": 1.15, "_cumulative_at_end": {"r": 669, "hr": 194, "rbi": 667, "sb": 111, "obp": 0.34, "w": 53, "sv": 38, "k": 781, "era": 3.7, "whip": 1.15}}, "pts": {"r_pts": 8, "hr_pts": 9, "rbi_pts": 11, "sb_pts": 12, "obp_pts": 9.5, "w_pts": 5.5, "sv_pts": 12, "k_pts": 9, "era_pts": 9, "whip_pts": 11, "total_pts": 96}}]}}, "latest_date": "2026-07-06", "moshe_team": "469.l.11742.t.1", "season_projection": {"as_of": "2026-07-06", "standing": [{"team_key": "469.l.11742.t.9", "team_name": "Nuggets", "totals": {"r": 522, "hr": 137, "rbi": 492, "sb": 68, "k": 585, "w": 37, "sv": 8, "obp": 0.313, "era": 4.63, "whip": 1.29}, "pts": {"total_pts": 15.0}}, {"team_key": "469.l.11742.t.5", "team_name": "The Bazzana Stand", "totals": {"r": 544, "hr": 141, "rbi": 463, "sb": 86, "k": 648, "w": 35, "sv": 19, "obp": 0.321, "era": 4.35, "whip": 1.28}, "pts": {"total_pts": 25.5}}, {"team_key": "469.l.11742.t.3", "team_name": "Built to Lose", "totals": {"r": 580, "hr": 155, "rbi": 553, "sb": 82, "k": 736, "w": 35, "sv": 40, "obp": 0.314, "era": 4.31, "whip": 1.32}, "pts": {"total_pts": 42.5}}, {"team_key": "469.l.11742.t.12", "team_name": "The Potato \ud83e\udd54", "totals": {"r": 553, "hr": 160, "rbi": 525, "sb": 76, "k": 783, "w": 52, "sv": 41, "obp": 0.319, "era": 3.88, "whip": 1.24}, "pts": {"total_pts": 57.0}}, {"team_key": "469.l.11742.t.10", "team_name": "GIANT", "totals": {"r": 637, "hr": 146, "rbi": 505, "sb": 119, "k": 763, "w": 49, "sv": 21, "obp": 0.328, "era": 4.03, "whip": 1.27}, "pts": {"total_pts": 57.5}}, {"team_key": "469.l.11742.t.2", "team_name": "2020 champ", "totals": {"r": 585, "hr": 162, "rbi": 563, "sb": 78, "k": 656, "w": 43, "sv": 24, "obp": 0.332, "era": 3.59, "whip": 1.16}, "pts": {"total_pts": 65.5}}, {"team_key": "469.l.11742.t.6", "team_name": "Wyatt Power", "totals": {"r": 566, "hr": 150, "rbi": 541, "sb": 109, "k": 830, "w": 62, "sv": 35, "obp": 0.328, "era": 3.94, "whip": 1.22}, "pts": {"total_pts": 70.5}}, {"team_key": "469.l.11742.t.4", "team_name": "4eva is a 4 letter word", "totals": {"r": 660, "hr": 176, "rbi": 648, "sb": 63, "k": 728, "w": 43, "sv": 45, "obp": 0.342, "era": 4.09, "whip": 1.26}, "pts": {"total_pts": 70.5}}, {"team_key": "469.l.11742.t.1", "team_name": "I Own Ronald Acuna For Life", "totals": {"r": 556, "hr": 174, "rbi": 536, "sb": 107, "k": 952, "w": 60, "sv": 42, "obp": 0.326, "era": 3.43, "whip": 1.2}, "pts": {"total_pts": 81.0}}, {"team_key": "469.l.11742.t.11", "team_name": "The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85", "totals": {"r": 697, "hr": 193, "rbi": 635, "sb": 108, "k": 862, "w": 51, "sv": 57, "obp": 0.34, "era": 3.96, "whip": 1.21}, "pts": {"total_pts": 94.0}}, {"team_key": "469.l.11742.t.7", "team_name": "Lucky Ladies", "totals": {"r": 669, "hr": 194, "rbi": 667, "sb": 111, "k": 781, "w": 53, "sv": 38, "obp": 0.34, "era": 3.7, "whip": 1.15}, "pts": {"total_pts": 96.5}}, {"team_key": "469.l.11742.t.8", "team_name": "Monroe Kajun", "totals": {"r": 605, "hr": 179, "rbi": 578, "sb": 116, "k": 836, "w": 57, "sv": 57, "obp": 0.341, "era": 3.26, "whip": 1.14}, "pts": {"total_pts": 104.5}}], "projected_penalty": {"last": {"teams": ["Nuggets"], "amount": -100.0}, "second_last": {"teams": ["The Bazzana Stand"], "amount": -50.0}}}, "payments": {"by_month": {"2026-Jul": {"status": "live", "note": "Current month in progress \u2014 no payment applied yet", "rows": [], "losers": ["Nuggets"], "second_losers": ["The Bazzana Stand"], "bests": ["Lucky Ladies"], "second_bests": ["The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85", "Monroe Kajun"], "ties": {"best": false, "second_best": true, "worst": false, "second_worst": false}}, "2026-Jun": {"status": "completed", "rows": [{"team_name": "Nuggets", "role": "last", "amount": -10.0}, {"team_name": "The Bazzana Stand", "role": "2nd-last", "amount": -20.0}, {"team_name": "Monroe Kajun", "role": "best", "amount": 20.0}, {"team_name": "The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85", "role": "2nd-best", "amount": 10.0}], "losers": ["Nuggets"], "second_losers": ["The Bazzana Stand"], "bests": ["Monroe Kajun"], "second_bests": ["The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85"], "ties": {"best": false, "second_best": false, "worst": false, "second_worst": false}}, "2026-Mar-Apr": {"status": "completed", "rows": [{"team_name": "The Bazzana Stand", "role": "last", "amount": -10.0}, {"team_name": "Nuggets", "role": "2nd-last", "amount": -20.0}, {"team_name": "The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85", "role": "best", "amount": 20.0}, {"team_name": "Lucky Ladies", "role": "2nd-best", "amount": 10.0}], "losers": ["The Bazzana Stand"], "second_losers": ["Nuggets"], "bests": ["The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85"], "second_bests": ["Lucky Ladies"], "ties": {"best": false, "second_best": false, "worst": false, "second_worst": false}}, "2026-May": {"status": "completed", "rows": [{"team_name": "Nuggets", "role": "last", "amount": -10.0}, {"team_name": "The Potato \ud83e\udd54", "role": "2nd-last", "amount": -20.0}, {"team_name": "Monroe Kajun", "role": "best", "amount": 20.0}, {"team_name": "The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85", "role": "2nd-best", "amount": 10.0}], "losers": ["Nuggets"], "second_losers": ["The Potato \ud83e\udd54"], "bests": ["Monroe Kajun"], "second_bests": ["The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85"], "ties": {"best": false, "second_best": false, "worst": false, "second_worst": false}}}, "season_ledger": {"Nuggets": -40.0, "The Bazzana Stand": -30.0, "Monroe Kajun": 40.0, "The Chicagoland Dandies \ud83d\udc85\ud83d\udc85\ud83d\udc85": 40.0, "Lucky Ladies": 10.0, "The Potato \ud83e\udd54": -20.0}, "rules_note": "Monthly (accrues each completed month): last team pays $10 to 2nd-best; 2nd-last pays $20 to best. Season-end (one-time, based on final standings): last team pays $100, 2nd-last pays $50. Ties split equally.", "data_note": "Data source: Yahoo Fantasy standings chart (canonical). Counting cats (R/HR/RBI/SB/K/W/SV) are exact per-month values via cumulative-endpoint diff. Rate cats (OBP/ERA/WHIP) are cumulative-season through the month's end date (slight bias for later months as rates blend with prior months)."}}</script>
+<script>
+(function(){
+  const DATA = JSON.parse(document.getElementById("data").textContent);
+  const MONTH_ORDER = ["2026-Mar-Apr", "2026-May", "2026-Jun", "2026-Jul"];
+  const months = MONTH_ORDER.filter(m => m in DATA.months);
+  const monthLabel = m => ({
+    "2026-Mar-Apr": "Mar–Apr",
+    "2026-May": "May",
+    "2026-Jun": "June",
+    "2026-Jul": "July",
+  })[m] || m;
+  const monthRange = m => `${DATA.months[m].start} → ${DATA.months[m].end}`;
+  const isLive = m => DATA.months[m].status === "live";
+  const monthNote = m => {
+    if (m === "2026-Mar-Apr") return "Season opener period: 3/25 – 4/30 combined (~37 days).";
+    if (isLive(m)) return `⚡ Live — current month in progress through ${DATA.months[m].end}. No payment applied yet.`;
+    return null;
+  };
+
+  const CATS = [
+    ["r","R","int"],["hr","HR","int"],["rbi","RBI","int"],["sb","SB","int"],["obp","OBP","obp"],
+    ["w","W","int"],["sv","SV","int"],["k","K","int"],["era","ERA","era"],["whip","WHIP","whip"],
+  ];
+  const fmt = {
+    int: v => (v == null ? "0" : String(v|0)),
+    obp: v => (v == null || isNaN(v)) ? ".000" : Number(v).toFixed(3).replace(/^0/, ""),
+    era: (v, ip) => (!ip || ip <= 0) ? "—" : Number(v).toFixed(2),
+    whip: (v, ip) => (!ip || ip <= 0) ? "—" : Number(v).toFixed(2),
+    money: v => {
+      if (!v) return "$0";
+      const sign = v < 0 ? "-" : "+";
+      const val = Math.abs(v);
+      return sign + "$" + (Number.isInteger(val) ? val : val.toFixed(2));
+    },
+  };
+  function catVal(cat_key, tot) {
+    const ip = tot.ip_outs ? tot.ip_outs / 3 : 0;
+    if (cat_key === "obp") return fmt.obp(tot.obp);
+    if (cat_key === "era") return fmt.era(tot.era, ip);
+    if (cat_key === "whip") return fmt.whip(tot.whip, ip);
+    return fmt.int(tot[cat_key]);
+  }
+  function moneyClass(v) { return v > 0 ? "money-pos" : (v < 0 ? "money-neg" : "money-zero"); }
+
+  const nav = document.getElementById("tabs");
+  const contentEl = document.getElementById("content");
+  const noteEl = document.getElementById("month-note");
+
+  months.forEach((m, i) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (i === months.length - 1 ? " active" : "");
+    const liveDot = isLive(m) ? ' <span style="color:var(--warn)">●</span>' : "";
+    b.innerHTML = `${monthLabel(m)}${liveDot} <span class="tab-count">${DATA.months[m].teams.length} teams</span>`;
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+      b.classList.add("active");
+      renderMonth(m);
+    });
+    nav.appendChild(b);
+  });
+  // Payments tab
+  const payTab = document.createElement("button");
+  payTab.className = "tab money";
+  payTab.innerHTML = `💰 Payments`;
+  payTab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    payTab.classList.add("active");
+    renderPayments();
+  });
+  nav.appendChild(payTab);
+
+  function renderMonth(m) {
+    contentEl.innerHTML = "";
+    const n = monthNote(m);
+    if (n) { noteEl.textContent = n; noteEl.hidden = false; } else noteEl.hidden = true;
+
+    const teams = DATA.months[m].teams;
+    const N = teams.length;
+    teams.forEach((t, idx) => {
+      const rank = idx + 1;
+      const isWorst = rank === 1;
+      const isBest = rank === N;
+      const isMine = t.team_key === DATA.moshe_team;
+
+      const el = document.createElement("article");
+      el.className = "team" + (isMine ? " mine" : "");
+      const rankCls = isWorst ? " worst" : (isBest ? " best" : "");
+      const headCats = CATS.map(([k, lab]) =>
+        `<span><span class="lab">${lab}</span> ${catVal(k, t.totals)}</span>`
+      ).join("");
+      el.innerHTML = `
+        <header class="team-head">
+          <div class="rank${rankCls}">${rank}</div>
+          <div>
+            <div class="team-name">${esc(t.team_name)}${isMine ? ' <span class="badge">YOU</span>' : ""}</div>
+            <div class="head-cats">${headCats}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="roto">${t.pts.total_pts}</div>
+            <div class="roto-label">roto pts</div>
+          </div>
+          <div class="chev">›</div>
+        </header>
+        <div class="team-body">
+          <div class="cat-strip">
+            ${CATS.map(([k, lab]) => {
+              const pts = t.pts[k + "_pts"] || 0;
+              const cls = pts >= N - 2 ? "rank-high" : (pts <= 3 ? "rank-low" : "");
+              return `<div class="cat ${cls}">
+                <div class="cat-lab">${lab}</div>
+                <div class="cat-val">${catVal(k, t.totals)}</div>
+                <div class="cat-pts">${pts}/${N}</div>
+              </div>`;
+            }).join("")}
+          </div>
+          <div class="days">
+            <div class="days-title">Daily breakdown · click any day to expand full stat line</div>
+            ${(t.days || []).map(d => renderDay(d)).join("")}
+          </div>
+        </div>`;
+      el.querySelector(".team-head").addEventListener("click", () => el.classList.toggle("open"));
+      el.querySelectorAll(".day-head").forEach(dh => {
+        dh.addEventListener("click", e => { e.stopPropagation(); dh.parentElement.classList.toggle("open"); });
+      });
+      contentEl.appendChild(el);
+    });
+  }
+
+  function renderDay(d) {
+    const t = d.totals;
+    const dayCats = CATS.map(([k, lab]) =>
+      `<div class="cat-cell"><span class="lab">${lab}</span><span class="val">${catVal(k, t)}</span></div>`
+    ).join("");
+    const hit = [
+      ["AB", t.ab], ["H", t.h], ["R", t.r], ["HR", t.hr], ["RBI", t.rbi], ["SB", t.sb],
+      ["BB", t.bb], ["HBP", t.hbp || 0], ["SF", t.sf || 0],
+    ];
+    const pitch = [
+      ["IP", t.ip_outs ? `${Math.floor(t.ip_outs/3)}.${t.ip_outs%3}` : "0.0"],
+      ["ER", t.er], ["H", t.p_h || 0], ["BB", t.p_bb || 0], ["K", t.k], ["W", t.w], ["SV", t.sv],
+    ];
+    const pairFmt = arr => arr.map(([l, v]) => `<span class="pair"><span class="lab">${l}</span><span class="val">${v}</span></span>`).join("");
+    const denomOBP = (t.ab||0) + (t.bb||0) + (t.hbp||0) + (t.sf||0);
+    const ip = t.ip_outs ? t.ip_outs / 3 : 0;
+    return `<div class="day">
+      <div class="day-head">
+        <div class="day-date">${d.date}</div>
+        <div class="day-cats">${dayCats}</div>
+        <div class="day-chev">›</div>
+      </div>
+      <div class="day-body">
+        <div class="stat-line"><span class="grp">Hitting</span>${pairFmt(hit)}</div>
+        <div class="stat-line"><span class="grp">OBP</span>
+          <span class="pair"><span class="lab">value</span><span class="val">${fmt.obp(t.obp)}</span></span>
+          <span class="pair"><span class="lab">formula</span><span class="val">(${t.h||0}+${t.bb||0}+${t.hbp||0})/(${t.ab||0}+${t.bb||0}+${t.hbp||0}+${t.sf||0}) = ${denomOBP ? ((t.h+t.bb+t.hbp)/denomOBP).toFixed(3) : "n/a"}</span></span>
+        </div>
+        <div class="stat-line"><span class="grp">Pitching</span>${pairFmt(pitch)}</div>
+        <div class="stat-line"><span class="grp">ERA · WHIP</span>
+          <span class="pair"><span class="lab">ERA</span><span class="val">${fmt.era(t.era, ip)}</span></span>
+          <span class="pair"><span class="lab">WHIP</span><span class="val">${fmt.whip(t.whip, ip)}</span></span>
+          ${ip > 0 ? `<span class="pair"><span class="lab">formula</span><span class="val">${t.er||0}×9÷${ip.toFixed(2)} · (${t.p_h||0}+${t.p_bb||0})÷${ip.toFixed(2)}</span></span>` : ""}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function renderPayments() {
+    noteEl.hidden = true;
+    const p = DATA.payments;
+    const sp = DATA.season_projection;
+    const ledger = p.season_ledger;
+    const ledgerEntries = Object.entries(ledger).sort((a,b) => a[1] - b[1]);
+    const allTeamNames = DATA.months[months[0]].teams.map(t => t.team_name);
+    const missing = allTeamNames.filter(n => !(n in ledger));
+    const combinedLedger = ledgerEntries.concat(missing.map(n => [n, 0]));
+
+    // Season-end projected penalty
+    const projLast = sp.projected_penalty.last;
+    const projSecLast = sp.projected_penalty.second_last;
+
+    const summary = `
+      <div class="pay-summary">
+        <div class="pay-card">
+          <div class="lab">Monthly accrued (through June)</div>
+          <div class="val">${months.filter(m => p.by_month[m] && p.by_month[m].status !== 'live').length} months paid</div>
+          <div class="note">$10 last → 2nd-best, $20 2nd-last → best, each completed month.</div>
+        </div>
+        <div class="pay-card">
+          <div class="lab">If season ended today (${sp.as_of})</div>
+          <div class="val money-neg">${esc(projLast.teams[0])}</div>
+          <div class="note money-neg">Season-end penalty: ${fmt.money(projLast.amount)} (last) + ${fmt.money(projSecLast.amount)} to ${esc(projSecLast.teams[0])} (2nd-last)</div>
+        </div>
+        <div class="pay-card">
+          <div class="lab">Current month standings (${monthLabel('2026-Jul')})</div>
+          <div class="val" style="font-size:15px">Live · through ${DATA.months['2026-Jul']?.end || '—'}</div>
+          <div class="note">Not yet locked in. See the July tab.</div>
+        </div>
+      </div>
+      <div class="pay-rules">
+        <b>Rules:</b> <b>Monthly</b> — <span class="money-neg">last</span> pays $10 to <span class="money-pos">2nd-best</span>; <span class="money-neg">2nd-last</span> pays $20 to <span class="money-pos">best</span>. <b>Season-end</b> — <span class="money-neg">last</span> pays $100, <span class="money-neg">2nd-last</span> pays $50 (final standings, destination TBD). Ties split incoming payments equally.
+      </div>
+    `;
+
+    // Per-month tables
+    const monthCards = months.map(m => {
+      const md = p.by_month[m];
+      if (!md) return "";
+      if (md.status === "live") {
+        return `<div class="pay-month">
+          <div class="pay-month-head">
+            <h3>${monthLabel(m)} <span style="color:var(--warn);font:600 11px/1 var(--mono);letter-spacing:0.1em;margin-left:8px">● LIVE</span></h3>
+            <div class="range">${monthRange(m)}</div>
+          </div>
+          <div class="pay-tie">${md.note}. Current bottom-2: <b>${esc(md.losers.join(', '))}</b> (last) and <b>${esc(md.second_losers.join(', '))}</b> (2nd-last). Current top-2: <b>${esc(md.bests.join(', '))}</b> (best) and <b>${esc(md.second_bests.join(', '))}</b> (2nd-best).</div>
+        </div>`;
+      }
+      // Completed: show rows
+      const rows = md.rows.map(r => {
+        const roleClass = { "last":"last", "2nd-last":"sec-last", "best":"best", "2nd-best":"sec-best" }[r.role] || "";
+        return `<tr>
+          <td>${esc(r.team_name)}</td>
+          <td class="role ${roleClass}">${r.role}</td>
+          <td class="right ${moneyClass(r.amount)}"><b>${fmt.money(r.amount)}</b></td>
+        </tr>`;
+      }).join("");
+      const tieNote = (md.ties.best || md.ties.second_best || md.ties.worst || md.ties.second_worst)
+        ? `<div class="pay-tie">⚠ ${md.ties.worst ? `Tie at WORST between ${md.losers.join(" & ")} — $10 owed, split equally. ` : ""}${md.ties.second_worst ? `Tie at 2ND-WORST between ${md.second_losers.join(" & ")} — $20 owed, split. ` : ""}${md.ties.best ? `Tie at BEST between ${md.bests.join(" & ")} — $20 in split equally. ` : ""}${md.ties.second_best ? `Tie at 2ND-BEST between ${md.second_bests.join(" & ")} — $10 in split equally.` : ""}</div>`
+        : "";
+      return `<div class="pay-month">
+        <div class="pay-month-head">
+          <h3>${monthLabel(m)}</h3>
+          <div class="range">${monthRange(m)}</div>
+        </div>
+        ${tieNote}
+        <table class="pay">
+          <thead><tr><th>Team</th><th>Role</th><th class="right">Owed / Gained</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    }).join("");
+
+    // Season projection card
+    const projStandingRows = sp.standing.map((t, i) => {
+      const isMine = t.team_key === DATA.moshe_team;
+      const isLast = projLast.teams.includes(t.team_name);
+      const isSecLast = projSecLast.teams.includes(t.team_name);
+      let penalty = "";
+      if (isLast) penalty = `<span class="money-neg" style="font-weight:600">${fmt.money(projLast.amount)}</span>`;
+      else if (isSecLast) penalty = `<span class="money-neg" style="font-weight:600">${fmt.money(projSecLast.amount)}</span>`;
+      return `<tr class="${isMine ? 'mine' : ''}" style="${isMine ? 'background:rgba(72,213,151,0.06)' : ''}">
+        <td class="right" style="color:var(--text-mute);font-family:var(--mono)">${i+1}</td>
+        <td>${esc(t.team_name)}${isMine ? ' <span style="color:var(--best);font-family:var(--mono);font-size:10px;letter-spacing:0.1em;margin-left:6px">YOU</span>' : ''}</td>
+        <td class="right">${t.pts.total_pts.toFixed(1)}</td>
+        <td class="right">${penalty || '<span style="color:var(--text-mute)">—</span>'}</td>
+      </tr>`;
+    }).join("");
+
+    const projCard = `
+      <div class="pay-month">
+        <div class="pay-month-head" style="border-left:3px solid var(--warn)">
+          <h3>Season-end projection <span style="color:var(--warn);font:600 11px/1 var(--mono);letter-spacing:0.1em;margin-left:8px">AS OF ${sp.as_of}</span></h3>
+          <div class="range">Cumulative season standings 3/25 → ${sp.as_of}. Penalty only applies at true season end.</div>
+        </div>
+        <table class="pay">
+          <thead><tr><th class="right">#</th><th>Team</th><th class="right">Season roto</th><th class="right">Projected penalty</th></tr></thead>
+          <tbody>${projStandingRows}</tbody>
+        </table>
+      </div>
+    `;
+
+    // Season ledger (monthly only)
+    const ledgerRows = combinedLedger.sort((a,b) => a[1] - b[1]).map(([name, amt]) => {
+      const isMine = DATA.months[months[0]].teams.find(t => t.team_name === name)?.team_key === DATA.moshe_team;
+      return `<div class="ledger-row${isMine ? ' mine' : ''}">
+        <div><div class="ledger-name">${esc(name)}${isMine ? ' <span style="color:var(--best);font-family:var(--mono);font-size:10px;letter-spacing:0.1em;margin-left:6px">YOU</span>' : ""}</div></div>
+        <div class="ledger-amt ${moneyClass(amt)}">${fmt.money(amt)}</div>
+      </div>`;
+    }).join("");
+
+    contentEl.innerHTML = summary + monthCards + projCard + `
+      <div class="season-ledger">
+        <div class="ledger-head">
+          <h3>Monthly ledger — running net</h3>
+          <div class="sub">Only the $10 / $20 monthly payments so far (does NOT include the projected season-end $50/$100 penalty). Sums to zero because it's peer-to-peer.</div>
+        </div>
+        ${ledgerRows}
+      </div>
+    `;
+  }
+
+  function esc(s) { return String(s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+  renderMonth(months[months.length - 1]);
+})();
+</script>
