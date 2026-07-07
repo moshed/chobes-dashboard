@@ -130,6 +130,21 @@
   .ledger-amt { font:700 18px/1 var(--mono); font-variant-numeric:tabular-nums; }
   .ledger-owes { color:var(--text-mute); font:500 11px/1.4 var(--mono); margin-top:3px; }
 
+  /* Ledger drilldown */
+  .ledger-row { cursor:pointer; user-select:none; }
+  .ledger-row:hover { background:var(--panel-2); }
+  .ledger-row .chev { color:var(--text-mute); font-size:12px; transition:transform 0.15s ease; display:inline-block; }
+  .ledger-row.open .chev { transform:rotate(90deg); }
+  .drill-panel { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:8px; padding:12px 14px; margin:8px 0 4px; }
+  .drill-section { padding:4px 0; }
+  .drill-section + .drill-section { border-top:1px solid var(--border-soft); padding-top:10px; margin-top:6px; }
+  .drill-lab { color:var(--text-mute); font:600 10px/1 var(--mono); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px; }
+  .drill-row { display:flex; justify-content:space-between; align-items:center; padding:4px 0; font:500 13px/1.3 var(--sans); }
+  .drill-arrow { color:var(--text-dim); }
+  .drill-amt { font:700 13px/1 var(--mono); font-variant-numeric:tabular-nums; }
+  .drill-net { text-align:right; margin-top:10px; padding-top:8px; border-top:1px dashed var(--border-soft); font:700 15px/1 var(--mono); font-variant-numeric:tabular-nums; }
+  .drill-empty { color:var(--text-mute); font:italic 12px/1.4 var(--sans); padding:2px 0; }
+
   @media (max-width:900px) {
     .day-cats { grid-template-columns:repeat(5, 1fr); }
     .pay-summary { grid-template-columns:1fr; }
@@ -461,8 +476,8 @@ function initApp(DATA) {
 
     // Season ledger (monthly only)
     const ledgerRows = combinedLedger.sort((a,b) => a[1] - b[1]).map(([name, amt]) => {
-      return `<div class="ledger-row">
-        <div><div class="ledger-name">${esc(name)}</div></div>
+      return `<div class="ledger-row" data-team="${esc(name)}">
+        <div><div class="ledger-name">${esc(name)} <span class="chev" style="margin-left:6px">›</span></div><div class="ledger-drill" style="display:none"></div></div>
         <div class="ledger-amt ${moneyClass(amt)}">${fmt.money(amt)}</div>
       </div>`;
     }).join("");
@@ -505,11 +520,57 @@ function initApp(DATA) {
       <div class="season-ledger">
         <div class="ledger-head">
           <h3>Season ledger — running net (completed months only)</h3>
-          <div class="sub">Excludes the live current month. Sums to zero (peer-to-peer).</div>
+          <div class="sub">Tap any team to see who they owe / who owes them.</div>
         </div>
         ${ledgerRows}
       </div>
     `;
+
+    // Wire up team drilldown on ledger rows
+    contentEl.querySelectorAll(".ledger-row[data-team]").forEach(row => {
+      row.addEventListener("click", () => {
+        const openAlready = row.classList.contains("open");
+        contentEl.querySelectorAll(".ledger-row.open").forEach(r => {
+          r.classList.remove("open");
+          const d = r.querySelector(".ledger-drill");
+          if (d) { d.style.display = "none"; d.innerHTML = ""; }
+        });
+        if (openAlready) return;
+        const teamName = row.getAttribute("data-team");
+        const outflows = aggregate.filter(f => f.from === teamName);
+        const inflows  = aggregate.filter(f => f.to === teamName);
+        const totalOut = outflows.reduce((a, f) => a + f.amount, 0);
+        const totalIn  = inflows.reduce((a, f) => a + f.amount, 0);
+        const net = totalIn - totalOut;
+        const drill = row.querySelector(".ledger-drill");
+        drill.style.display = "block";
+        drill.innerHTML = `
+          <div class="drill-panel">
+            ${outflows.length ? `
+              <div class="drill-section drill-out">
+                <div class="drill-lab">Pays (${outflows.length}) — total ${fmt.money(-totalOut)}</div>
+                ${outflows.sort((a,b)=>b.amount-a.amount).map(f => `
+                  <div class="drill-row">
+                    <span class="drill-arrow money-neg">→ ${esc(f.to)}</span>
+                    <span class="drill-amt money-neg">${fmt.money(-f.amount)}</span>
+                  </div>`).join("")}
+              </div>
+            ` : `<div class="drill-empty">No one to pay.</div>`}
+            ${inflows.length ? `
+              <div class="drill-section drill-in">
+                <div class="drill-lab">Receives (${inflows.length}) — total ${fmt.money(totalIn)}</div>
+                ${inflows.sort((a,b)=>b.amount-a.amount).map(f => `
+                  <div class="drill-row">
+                    <span class="drill-arrow money-pos">← ${esc(f.from)}</span>
+                    <span class="drill-amt money-pos">${fmt.money(f.amount)}</span>
+                  </div>`).join("")}
+              </div>
+            ` : `<div class="drill-empty">No one owes them.</div>`}
+            <div class="drill-net ${moneyClass(net)}">Net: ${fmt.money(net)}</div>
+          </div>`;
+        row.classList.add("open");
+      });
+    });
   }
 
   function esc(s) { return String(s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
