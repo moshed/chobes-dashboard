@@ -272,10 +272,6 @@
               </div>`;
             }).join("")}
           </div>
-          <div class="days">
-            <div class="days-title">Daily breakdown · click any day to expand full stat line</div>
-            ${(t.days || []).map(d => renderDay(d)).join("")}
-          </div>
         </div>`;
       el.querySelector(".team-head").addEventListener("click", () => el.classList.toggle("open"));
       el.querySelectorAll(".day-head").forEach(dh => {
