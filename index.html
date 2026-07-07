@@ -371,32 +371,34 @@
       </div>
     `;
 
+    // Compute flows for a single month
+    function monthFlows(md) {
+      const flows = [];
+      if (md.losers.length && md.second_bests.length) {
+        for (const loser of md.losers) for (const winner of md.second_bests) {
+          flows.push({from: loser, to: winner, amount: 10 / (md.losers.length * md.second_bests.length)});
+        }
+      }
+      if (md.second_losers.length && md.bests.length) {
+        for (const loser of md.second_losers) for (const winner of md.bests) {
+          flows.push({from: loser, to: winner, amount: 20 / (md.second_losers.length * md.bests.length)});
+        }
+      }
+      // Aggregate duplicates (same from → to)
+      const agg = new Map();
+      for (const f of flows) {
+        const k = `${f.from}||${f.to}`;
+        agg.set(k, (agg.get(k) || 0) + f.amount);
+      }
+      return Array.from(agg.entries()).map(([k, amt]) => {
+        const [from, to] = k.split("||");
+        return {from, to, amount: amt};
+      }).sort((a, b) => b.amount - a.amount);
+    }
+
     // Per-month "who pays who" arrow layout
     function renderPayFlow(md, m, isLive) {
-      // Two transactions per month:
-      //   last  →  2nd-best  ($10)
-      //   2nd-last  →  best   ($20)
-      const flows = [];
-      // Last pays 2nd-best
-      if (md.losers.length && md.second_bests.length) {
-        const totalOut = 10;
-        for (const loser of md.losers) {
-          for (const winner of md.second_bests) {
-            const amt = totalOut / (md.losers.length * md.second_bests.length);
-            flows.push({from: loser, to: winner, amount: amt, tag: "$10 last → 2nd-best"});
-          }
-        }
-      }
-      // 2nd-last pays best
-      if (md.second_losers.length && md.bests.length) {
-        const totalOut = 20;
-        for (const loser of md.second_losers) {
-          for (const winner of md.bests) {
-            const amt = totalOut / (md.second_losers.length * md.bests.length);
-            flows.push({from: loser, to: winner, amount: amt, tag: "$20 2nd-last → best"});
-          }
-        }
-      }
+      const flows = monthFlows(md);
       const rows = flows.map(f => `
         <div class="flow-row">
           <div class="flow-from"><span class="flow-tag">Pays</span> ${esc(f.from)}</div>
@@ -444,7 +446,41 @@
       </div>`;
     }).join("");
 
+    // Aggregate flows across ALL months (completed + live projected) — combine duplicates
+    const totalFlows = new Map();
+    for (const m of months) {
+      const md = p.by_month[m];
+      if (!md) continue;
+      const mf = monthFlows(md);
+      for (const f of mf) {
+        const k = `${f.from}||${f.to}`;
+        totalFlows.set(k, (totalFlows.get(k) || 0) + f.amount);
+      }
+    }
+    const aggregate = Array.from(totalFlows.entries()).map(([k, amt]) => {
+      const [from, to] = k.split("||");
+      return {from, to, amount: amt};
+    }).sort((a, b) => b.amount - a.amount);
+    const aggregateRows = aggregate.map(f => `
+      <div class="flow-row">
+        <div class="flow-from"><span class="flow-tag">Pays</span> ${esc(f.from)}</div>
+        <div class="flow-arrow">
+          <span class="flow-amt money-neg">${fmt.money(-f.amount)}</span>
+          <span class="flow-line"></span>
+          <span class="flow-amt money-pos">${fmt.money(f.amount)}</span>
+        </div>
+        <div class="flow-to">${esc(f.to)} <span class="flow-tag">Receives</span></div>
+      </div>
+    `).join("");
+
     contentEl.innerHTML = summary + monthCards + `
+      <div class="pay-month">
+        <div class="pay-month-head" style="border-left:3px solid var(--accent)">
+          <h3>Season aggregate — who pays who (all months combined incl. July projected)</h3>
+          <div class="range">Duplicate transfers rolled up. e.g. if Nuggets owes Monroe Kajun in multiple months, shown as one total.</div>
+        </div>
+        <div class="flow-container">${aggregateRows}</div>
+      </div>
       <div class="season-ledger">
         <div class="ledger-head">
           <h3>Season ledger — running net through ${monthLabel(months[months.length - 1])}</h3>
