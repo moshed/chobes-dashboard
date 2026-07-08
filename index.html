@@ -59,6 +59,15 @@
   table.teams-table td.both-cell .pts-val { color:var(--text-dim); font-size:10.5px; }
   table.teams-table td.both-cell .pts-val.pts-high { color:var(--best); font-weight:700; }
   table.teams-table td.both-cell .pts-val.pts-low { color:var(--worst); font-weight:700; }
+  table.teams-table td.stat-cell.unscored, table.teams-table th[data-sort="k9"] { opacity:0.75; }
+  table.teams-table td.stat-cell.unscored::after, table.teams-table th[data-sort="k9"]::after { content:" ✕"; color:var(--text-mute); font-size:9px; margin-left:1px; }
+  table.teams-table td.sim-cell { padding:4px 6px; }
+  table.teams-table td.sim-cell input.sim-ip-input { width:60px; background:var(--panel-2); border:1px solid var(--border-soft); color:var(--text); font:600 11px/1 var(--mono); padding:4px 6px; border-radius:5px; text-align:left; -moz-appearance:textfield; }
+  table.teams-table td.sim-cell input.sim-ip-input::-webkit-outer-spin-button, table.teams-table td.sim-cell input.sim-ip-input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  table.teams-table td.sim-cell input.sim-ip-input:focus { outline:1px solid var(--accent); }
+  .sim-banner { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:rgba(255,180,74,0.08); border-bottom:1px solid rgba(255,180,74,0.3); font:500 12px/1.4 var(--sans); color:var(--warn); }
+  .sim-banner button { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:5px; padding:3px 10px; font:600 11px/1 var(--mono); color:var(--text-dim); cursor:pointer; }
+  .sim-banner button:hover { background:var(--panel-3); color:var(--text); }
   @media (max-width:900px) {
     table.teams-table th, table.teams-table td { padding:6px 7px; font-size:11.5px; }
     table.teams-table td.team-name-cell { max-width:120px; overflow:hidden; text-overflow:ellipsis; }
@@ -308,8 +317,9 @@ function initApp(DATA) {
 
   const CATS = [
     ["r","R","int"],["hr","HR","int"],["rbi","RBI","int"],["sb","SB","int"],["obp","OBP","obp"],
-    ["w","W","int"],["sv","SV","int"],["k","K","int"],["era","ERA","era"],["whip","WHIP","whip"],
+    ["w","W","int"],["sv","SV","int"],["k","K","int"],["k9","K/9","k9",{unscored:true}],["era","ERA","era"],["whip","WHIP","whip"],
   ];
+  const UNSCORED_CATS = new Set(["k9"]);   // display-only; not part of roto scoring
   const fmt = {
     int: v => (v == null ? "0" : String(v|0)),
     obp: v => (v == null || isNaN(v)) ? ".000" : Number(v).toFixed(3).replace(/^0/, ""),
@@ -327,6 +337,7 @@ function initApp(DATA) {
     if (cat_key === "obp") return fmt.obp(tot.obp);
     if (cat_key === "era") return fmt.era(tot.era, ip);
     if (cat_key === "whip") return fmt.whip(tot.whip, ip);
+    if (cat_key === "k9") return ip > 0 ? (tot.k * 9 / ip).toFixed(2) : "—";
     return fmt.int(tot[cat_key]);
   }
   function moneyClass(v) { return v > 0 ? "money-pos" : (v < 0 ? "money-neg" : "money-zero"); }
@@ -403,11 +414,67 @@ function initApp(DATA) {
     const teams = DATA.months[m].teams.slice();
     const N = teams.length;
 
+    // Per-team IP override (simulator). Map team_key → custom_IP (float). Empty = actual.
+    const simOverride = {};   // team_key → new IP in innings
+    function effectiveTotals(t) {
+      const custom = simOverride[t.team_key];
+      if (custom == null || isNaN(custom) || custom <= 0) return t.totals;
+      const actualIP = (t.totals.ip_outs ?? 0) / 3;
+      if (actualIP <= 0) return t.totals;
+      const scale = custom / actualIP;
+      // Counting stats scale linearly with IP; ERA / WHIP / K/9 unchanged; hitting untouched.
+      return { ...t.totals,
+        k:  t.totals.k  * scale,
+        w:  t.totals.w  * scale,
+        sv: t.totals.sv * scale,
+        ip_outs: custom * 3,
+      };
+    }
+    function catValFor(cat, t) { return catVal(cat, effectiveTotals(t)); }
     function sortValue(t, key) {
       if (key === "team_name") return t.team_name;
-      if (key === "total_pts") return t.pts.total_pts;
-      if (key.endsWith("_pts")) return t.pts[key] || 0;
-      return t.totals[key] ?? 0;
+      if (key === "total_pts") return effectivePts(t).total_pts;
+      if (key.endsWith("_pts")) return effectivePts(t)[key] || 0;
+      if (key === "k9") {
+        const tot = effectiveTotals(t);
+        return tot.ip_outs > 0 ? (tot.k * 9) / (tot.ip_outs / 3) : 0;
+      }
+      return effectiveTotals(t)[key] ?? 0;
+    }
+    // Recompute roto ranks + total_pts when any team's IP is overridden.
+    // For counting cats: rank by value. For rate cats: rank by value (low is good for ERA/WHIP).
+    let cachedPts = null;
+    function effectivePts(t) {
+      if (Object.keys(simOverride).length === 0) return t.pts;
+      if (!cachedPts) cachedPts = recomputePts();
+      return cachedPts[t.team_key] || t.pts;
+    }
+    function recomputePts() {
+      const CATS_HIGH = ["r","hr","rbi","sb","obp","w","sv","k"];
+      const CATS_LOW  = ["era","whip"];
+      const result = {};
+      const rankCat = (cat, ascending) => {
+        const arr = teams.map(t => ({ tk: t.team_key, v: effectiveTotals(t)[cat] ?? 0 })).sort((a,b) => ascending ? a.v - b.v : b.v - a.v);
+        let i = 0;
+        while (i < arr.length) {
+          let j = i;
+          while (j+1 < arr.length && arr[j+1].v === arr[i].v) j++;
+          const avgRank = (i + 1 + j + 1) / 2;
+          for (let k = i; k <= j; k++) {
+            result[arr[k].tk] ??= {};
+            result[arr[k].tk][cat + "_pts"] = avgRank;
+          }
+          i = j + 1;
+        }
+      };
+      for (const cat of CATS_HIGH) rankCat(cat, true);
+      for (const cat of CATS_LOW)  rankCat(cat, false);
+      for (const t of teams) {
+        result[t.team_key] ??= {};
+        result[t.team_key].total_pts = [...CATS_HIGH, ...CATS_LOW]
+          .reduce((s,c) => s + (result[t.team_key][c + "_pts"] || 0), 0);
+      }
+      return result;
     }
     function sortTeams() {
       const mult = monthSort.dir === "asc" ? 1 : -1;
@@ -458,12 +525,15 @@ function initApp(DATA) {
       const cols = [
         { key: "rank",       lab: "#",     sort: null },
         { key: "team_name",  lab: "Team",  sort: "team_name" },
-        ...CATS.map(([k, lab]) => {
+        ...CATS.map(([k, lab, , meta]) => {
+          const unscored = meta && meta.unscored;
+          if (unscored) return { key: k, lab, sort: k, cat: k, type: "stat", unscored: true };
           if (monthViewMode === "both") return { key: k, lab, sort: k, cat: k, type: "both" };
           if (monthViewMode === "stats") return { key: k, lab, sort: k, cat: k, type: "stat" };
           return { key: k + "_pts", lab, sort: k + "_pts", cat: k, type: "pts" };
         }),
         { key: "total_pts", lab: "Total", sort: "total_pts", strong: true },
+        { key: "sim_ip",    lab: "Sim IP", sort: null, type: "sim" },
       ];
 
       const arrow = (c) => {
@@ -480,24 +550,38 @@ function initApp(DATA) {
         const cells = cols.map(c => {
           if (c.key === "rank") return `<td class="rank ${rankCls}">${r}</td>`;
           if (c.key === "team_name") return `<td class="team-name-cell">${esc(t.team_name)}</td>`;
-          if (c.key === "total_pts") return `<td class="strong">${t.pts.total_pts}</td>`;
+          if (c.key === "total_pts") return `<td class="strong">${effectivePts(t).total_pts}</td>`;
+          if (c.type === "sim") {
+            const actualIP = (t.totals.ip_outs ?? 0) / 3;
+            const current = simOverride[t.team_key];
+            return `<td class="sim-cell"><input type="number" step="0.1" min="0" placeholder="${actualIP.toFixed(1)}" data-team="${t.team_key}" value="${current != null ? current : ""}" class="sim-ip-input"></td>`;
+          }
+          if (c.unscored) {
+            return `<td class="stat-cell unscored" title="Not scored">${catValFor(c.cat, t)}</td>`;
+          }
           if (c.type === "pts") {
-            const p = t.pts[c.cat + "_pts"] || 0;
+            const p = effectivePts(t)[c.cat + "_pts"] || 0;
             const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
             return `<td class="pts-cell ${cls}">${p}</td>`;
           }
           if (c.type === "both") {
-            const p = t.pts[c.cat + "_pts"] || 0;
+            const p = effectivePts(t)[c.cat + "_pts"] || 0;
             const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
-            return `<td class="both-cell"><span class="stat-val">${catVal(c.cat, t.totals)}</span><span class="both-sep">/</span><span class="pts-val ${cls}">${p}</span></td>`;
+            return `<td class="both-cell"><span class="stat-val">${catValFor(c.cat, t)}</span><span class="both-sep">/</span><span class="pts-val ${cls}">${p}</span></td>`;
           }
           // stat
-          return `<td class="stat-cell">${catVal(c.cat, t.totals)}</td>`;
+          return `<td class="stat-cell">${catValFor(c.cat, t)}</td>`;
         }).join("");
         return `<tr>${cells}</tr>`;
       }).join("");
 
-      wrapper.innerHTML = `<table class="teams-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+      // Sim reset banner
+      const simActive = Object.values(simOverride).filter(v => v != null).length;
+      const simBanner = simActive > 0 ? `<div class="sim-banner">
+        <span>⚗️ Simulator active on ${simActive} team${simActive===1?"":"s"} — pitching K/W/SV scaled by custom IP. Points recomputed.</span>
+        <button class="sim-reset">Reset all</button>
+      </div>` : "";
+      wrapper.innerHTML = simBanner + `<table class="teams-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
       wrapper.querySelectorAll("th.sortable").forEach(th => {
         th.addEventListener("click", () => {
           const k = th.getAttribute("data-sort");
@@ -509,6 +593,26 @@ function initApp(DATA) {
           }
           renderTable();
         });
+      });
+      // Wire Sim IP inputs
+      wrapper.querySelectorAll(".sim-ip-input").forEach(inp => {
+        inp.addEventListener("input", (e) => {
+          const tk = e.target.getAttribute("data-team");
+          const val = parseFloat(e.target.value);
+          if (isNaN(val) || val <= 0) delete simOverride[tk];
+          else simOverride[tk] = val;
+          cachedPts = null;
+          renderTable();
+          // Re-focus the input the user was typing in
+          const again = wrapper.querySelector(`.sim-ip-input[data-team="${tk}"]`);
+          if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+        });
+      });
+      const resetBtn = wrapper.querySelector(".sim-reset");
+      if (resetBtn) resetBtn.addEventListener("click", () => {
+        for (const k of Object.keys(simOverride)) delete simOverride[k];
+        cachedPts = null;
+        renderTable();
       });
     }
     renderTable();
@@ -769,6 +873,7 @@ function initApp(DATA) {
     w:  {lab:"W",   counting:true,  group:"pitching"},
     sv: {lab:"SV",  counting:true,  group:"pitching"},
     k:  {lab:"K",   counting:true,  group:"pitching"},
+    k9: {lab:"K/9", counting:false, group:"pitching", unscored:true, fmt:v=>v.toFixed(2)},
     era:{lab:"ERA", counting:false, group:"pitching", fmt:v=>v.toFixed(2)},
     whip:{lab:"WHIP", counting:false, group:"pitching", fmt:v=>v.toFixed(2)},
   };
@@ -940,9 +1045,11 @@ function initApp(DATA) {
         } else {
           v = s[stat];
         }
-      } else if (stat === "ip") {
-        v = (s.ip_outs ?? 0) / 3;
-        if (useCum) { running += v; v = running; }
+      } else if (stat === "k9") {
+        // Cumulative K/9 across range: sum(K) × 9 / sum(IP) each day
+        cum_ip += s.ip_outs ?? 0;
+        running += s.k ?? 0;
+        v = cum_ip > 0 ? running * 9 / (cum_ip / 3) : null;
       } else {
         // counting cats
         v = s[stat] ?? 0;
