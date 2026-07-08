@@ -25,6 +25,37 @@
   .tab.money.active { border-bottom-color:var(--warn); }
   .tab-count { color:var(--text-mute); font-family:var(--mono); font-size:11px; margin-left:4px; }
   .month-note { background:var(--panel); border:1px solid var(--border); border-left:3px solid var(--warn); border-radius:8px; padding:10px 14px; margin:0 0 20px; font-size:13px; color:var(--text-dim); }
+
+  /* Month view toolbar + sortable table */
+  .month-toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-wrap:wrap; }
+  .view-toggle { display:inline-flex; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  .view-toggle button { background:none; border:none; padding:8px 14px; color:var(--text-dim); font:600 12px/1 var(--sans); cursor:pointer; border-right:1px solid var(--border); }
+  .view-toggle button:last-child { border-right:none; }
+  .view-toggle button:hover { color:var(--text); background:var(--panel-2); }
+  .view-toggle button.on { background:var(--panel-3); color:var(--text); }
+  .sort-hint { color:var(--text-mute); font:500 11px/1 var(--mono); letter-spacing:0.04em; }
+  .table-wrap { background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow-x:auto; }
+  table.teams-table { width:100%; border-collapse:collapse; min-width:600px; font-variant-numeric:tabular-nums; }
+  table.teams-table th, table.teams-table td { padding:9px 12px; text-align:right; font-size:13px; white-space:nowrap; }
+  table.teams-table th { color:var(--text-mute); font:600 11px/1 var(--mono); letter-spacing:0.06em; text-transform:uppercase; background:var(--panel-2); border-bottom:1px solid var(--border-soft); position:sticky; top:0; }
+  table.teams-table th.sortable { cursor:pointer; user-select:none; }
+  table.teams-table th.sortable:hover { color:var(--text); background:var(--panel-3); }
+  table.teams-table th.strong, table.teams-table td.strong { color:var(--text); font-weight:700; }
+  table.teams-table td { border-bottom:1px solid var(--border-soft); }
+  table.teams-table tr:last-child td { border-bottom:none; }
+  table.teams-table tr:hover td { background:var(--panel-2); }
+  table.teams-table th:nth-child(1), table.teams-table td.rank { text-align:center; width:38px; font-family:var(--mono); font-weight:700; }
+  table.teams-table td.rank.best { color:var(--best); }
+  table.teams-table td.rank.worst { color:var(--worst); }
+  table.teams-table th:nth-child(2), table.teams-table td.team-name-cell { text-align:left; font-family:var(--sans); font-weight:600; color:var(--text); }
+  table.teams-table td.stat-cell { color:var(--text); font-family:var(--mono); }
+  table.teams-table td.pts-cell { color:var(--text-dim); font-family:var(--mono); font-size:12px; }
+  table.teams-table td.pts-cell.pts-high { color:var(--best); font-weight:700; }
+  table.teams-table td.pts-cell.pts-low { color:var(--worst); font-weight:700; }
+  table.teams-table th.stat-col + th.pts-col, table.teams-table td.stat-cell + td.pts-cell { border-left:1px dashed var(--border-soft); }
+  @media (max-width:720px) {
+    table.teams-table th, table.teams-table td { padding:6px 8px; font-size:11.5px; }
+  }
   .team { background:var(--panel); border:1px solid var(--border); border-radius:12px; margin-bottom:8px; overflow:hidden; }
   .team.mine { border-color:var(--best); box-shadow:0 0 0 1px rgba(72,213,151,0.2); }
   .team-head { display:grid; grid-template-columns:32px 1fr auto auto; gap:14px; align-items:center; padding:12px 16px; cursor:pointer; user-select:none; }
@@ -280,56 +311,123 @@ function initApp(DATA) {
   }
   window.addEventListener("hashchange", route);
 
+  // Persistent state for month tab
+  let monthViewMode = localStorage.getItem("chobes_view_mode") || "both";  // "stats" | "points" | "both"
+  let monthSort = { key: "total_pts", dir: "desc" };  // sort by total roto pts desc by default
+
   function renderMonth(m) {
     contentEl.innerHTML = "";
     const n = monthNote(m);
     if (n) { noteEl.textContent = n; noteEl.hidden = false; } else noteEl.hidden = true;
 
-    // Data is stored worst-first; display best-first (#1 = top team)
-    const teams = [...DATA.months[m].teams].reverse();
+    const teams = DATA.months[m].teams.slice();
     const N = teams.length;
-    teams.forEach((t, idx) => {
-      const rank = idx + 1;
-      const isBest = rank === 1;
-      const isWorst = rank === N;
-      const el = document.createElement("article");
-      el.className = "team";
-      const rankCls = isWorst ? " worst" : (isBest ? " best" : "");
-      const headCats = CATS.map(([k, lab]) =>
-        `<span><span class="lab">${lab}</span> ${catVal(k, t.totals)}</span>`
-      ).join("");
-      el.innerHTML = `
-        <header class="team-head">
-          <div class="rank${rankCls}">${rank}</div>
-          <div>
-            <div class="team-name">${esc(t.team_name)}</div>
-            <div class="head-cats">${headCats}</div>
-          </div>
-          <div style="text-align:right">
-            <div class="roto">${t.pts.total_pts}</div>
-            <div class="roto-label">roto pts</div>
-          </div>
-          <div class="chev">›</div>
-        </header>
-        <div class="team-body">
-          <div class="cat-strip">
-            ${CATS.map(([k, lab]) => {
-              const pts = t.pts[k + "_pts"] || 0;
-              const cls = pts >= N - 2 ? "rank-high" : (pts <= 3 ? "rank-low" : "");
-              return `<div class="cat ${cls}">
-                <div class="cat-lab">${lab}</div>
-                <div class="cat-val">${catVal(k, t.totals)}</div>
-                <div class="cat-pts">${pts}/${N}</div>
-              </div>`;
-            }).join("")}
-          </div>
-        </div>`;
-      el.querySelector(".team-head").addEventListener("click", () => el.classList.toggle("open"));
-      el.querySelectorAll(".day-head").forEach(dh => {
-        dh.addEventListener("click", e => { e.stopPropagation(); dh.parentElement.classList.toggle("open"); });
+
+    function sortValue(t, key) {
+      if (key === "team_name") return t.team_name;
+      if (key === "total_pts") return t.pts.total_pts;
+      if (key.endsWith("_pts")) return t.pts[key] || 0;
+      return t.totals[key] ?? 0;
+    }
+    function sortTeams() {
+      const mult = monthSort.dir === "asc" ? 1 : -1;
+      teams.sort((a, b) => {
+        const va = sortValue(a, monthSort.key), vb = sortValue(b, monthSort.key);
+        if (typeof va === "string") return mult * va.localeCompare(vb);
+        return mult * (va - vb);
       });
-      contentEl.appendChild(el);
+    }
+    function ranked() {
+      // Rank always by total_pts desc (stable independent of sort)
+      const byPts = teams.slice().sort((a, b) => b.pts.total_pts - a.pts.total_pts);
+      const rankMap = new Map();
+      byPts.forEach((t, i) => rankMap.set(t.team_key, i + 1));
+      return rankMap;
+    }
+
+    // Header + toolbar
+    const toolbar = document.createElement("div");
+    toolbar.className = "month-toolbar";
+    toolbar.innerHTML = `
+      <div class="view-toggle">
+        <button data-mode="stats"${monthViewMode==='stats'?' class="on"':''}>Stats</button>
+        <button data-mode="points"${monthViewMode==='points'?' class="on"':''}>Points</button>
+        <button data-mode="both"${monthViewMode==='both'?' class="on"':''}>Both</button>
+      </div>
+      <div class="sort-hint">Tap any column to sort</div>
+    `;
+    contentEl.appendChild(toolbar);
+    toolbar.querySelectorAll(".view-toggle button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        monthViewMode = btn.getAttribute("data-mode");
+        localStorage.setItem("chobes_view_mode", monthViewMode);
+        renderTable();
+      });
     });
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "table-wrap";
+    contentEl.appendChild(wrapper);
+
+    function renderTable() {
+      sortTeams();
+      const rank = ranked();
+      const showStats = monthViewMode === "stats" || monthViewMode === "both";
+      const showPoints = monthViewMode === "points" || monthViewMode === "both";
+
+      const cols = [
+        { key: "rank",       lab: "#",     sort: null },
+        { key: "team_name",  lab: "Team",  sort: "team_name" },
+        ...CATS.flatMap(([k, lab]) => {
+          const arr = [];
+          if (showStats)  arr.push({ key: k,              lab, sort: k,              cat: k, type: "stat" });
+          if (showPoints) arr.push({ key: k + "_pts",     lab: showStats ? `${lab} pts` : lab, sort: k + "_pts", cat: k, type: "pts" });
+          return arr;
+        }),
+        { key: "total_pts", lab: "Total", sort: "total_pts", strong: true },
+      ];
+
+      const arrow = (c) => {
+        if (!c.sort || c.sort !== monthSort.key) return "";
+        return monthSort.dir === "desc" ? "▼" : "▲";
+      };
+      const thead = "<tr>" + cols.map(c =>
+        `<th class="${c.sort ? 'sortable' : ''} ${c.strong?'strong':''} ${c.type==='stat'?'stat-col':''} ${c.type==='pts'?'pts-col':''}" data-sort="${c.sort||''}">${c.lab} ${arrow(c)}</th>`
+      ).join("") + "</tr>";
+
+      const tbody = teams.map(t => {
+        const r = rank.get(t.team_key);
+        const rankCls = r === 1 ? "best" : (r === N ? "worst" : "");
+        const cells = cols.map(c => {
+          if (c.key === "rank") return `<td class="rank ${rankCls}">${r}</td>`;
+          if (c.key === "team_name") return `<td class="team-name-cell">${esc(t.team_name)}</td>`;
+          if (c.key === "total_pts") return `<td class="strong">${t.pts.total_pts}</td>`;
+          if (c.type === "pts") {
+            const p = t.pts[c.cat + "_pts"] || 0;
+            const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
+            return `<td class="pts-cell ${cls}">${p}</td>`;
+          }
+          // stat
+          return `<td class="stat-cell">${catVal(c.cat, t.totals)}</td>`;
+        }).join("");
+        return `<tr>${cells}</tr>`;
+      }).join("");
+
+      wrapper.innerHTML = `<table class="teams-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+      wrapper.querySelectorAll("th.sortable").forEach(th => {
+        th.addEventListener("click", () => {
+          const k = th.getAttribute("data-sort");
+          if (monthSort.key === k) {
+            monthSort.dir = monthSort.dir === "asc" ? "desc" : "asc";
+          } else {
+            monthSort.key = k;
+            monthSort.dir = k === "team_name" ? "asc" : "desc";
+          }
+          renderTable();
+        });
+      });
+    }
+    renderTable();
   }
 
   function renderDay(d) {
