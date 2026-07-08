@@ -756,6 +756,7 @@ function initApp(DATA) {
   const TEAM_COLORS = ["#48d597","#6ea3ff","#f2603a","#ffb44a","#b384b5","#ff7200","#779de3","#cbc8ba","#7ed7a6","#007a6c","#e04b7a","#4dbfd6"];
   const STAT_DASH = ["", "6,3", "2,3", "10,3,2,3", "1,3"];   // solid, dashed, dotted, dash-dot, dense-dotted
   const CHART_STAT_META = {
+    total_pts:{lab:"Total pts", counting:false, special:"total_pts", fmt:v=>v.toFixed(1)},
     r:{lab:"R", counting:true}, hr:{lab:"HR", counting:true}, rbi:{lab:"RBI", counting:true},
     sb:{lab:"SB", counting:true}, k:{lab:"K", counting:true}, w:{lab:"W", counting:true}, sv:{lab:"SV", counting:true},
     obp:{lab:"OBP", counting:false, fmt:v=>v.toFixed(3).replace(/^0/,"")},
@@ -818,13 +819,82 @@ function initApp(DATA) {
     return d;
   }
 
+  // Precompute daily total roto points per team, treating each date as if the
+  // season ended that day. All 12 teams get cumulative-through-date components,
+  // ranked in each cat (avg rank for ties), summed. Cached on first compute.
+  let dailyTotalPtsCache = null;
+  function ensureDailyTotalPts(cache, dateArr) {
+    if (dailyTotalPtsCache) return dailyTotalPtsCache;
+    const teamKeys = Object.keys(cache);
+    const cats_high = ["r","hr","rbi","sb","obp","w","sv","k"];
+    const cats_low = ["era","whip"];
+    const cum = {};
+    for (const tk of teamKeys) cum[tk] = { r:0, hr:0, rbi:0, sb:0, k:0, w:0, sv:0, h:0, ab:0, e:0, ip_outs:0, er_num:0, wh_num:0 };
+    const result = {};
+    for (const tk of teamKeys) result[tk] = {};
+    for (const d of dateArr) {
+      for (const tk of teamKeys) {
+        const s = cache[tk][d] || {};
+        const c = cum[tk];
+        c.r += s.r || 0; c.hr += s.hr || 0; c.rbi += s.rbi || 0; c.sb += s.sb || 0;
+        c.k += s.k || 0; c.w += s.w || 0; c.sv += s.sv || 0;
+        c.h += s.h || 0; c.ab += s.ab || 0; c.ip_outs += s.ip_outs || 0;
+        if (s.obp != null && s.obp > 0 && s.obp < 1 && (s.ab || 0) > 0) {
+          const e = (s.obp * s.ab - s.h) / (1 - s.obp);
+          if (e > 0) c.e += e;
+        }
+        if (s.era != null && s.ip_outs > 0) c.er_num += s.era * (s.ip_outs / 3) / 9;
+        if (s.whip != null && s.ip_outs > 0) c.wh_num += s.whip * (s.ip_outs / 3);
+      }
+      // Compute per-cat cumulative-through-date values
+      const vals = {};
+      for (const cat of [...cats_high, ...cats_low]) vals[cat] = {};
+      for (const tk of teamKeys) {
+        const c = cum[tk];
+        vals.r[tk] = c.r; vals.hr[tk] = c.hr; vals.rbi[tk] = c.rbi; vals.sb[tk] = c.sb;
+        vals.k[tk] = c.k; vals.w[tk] = c.w; vals.sv[tk] = c.sv;
+        vals.obp[tk] = (c.ab + c.e) > 0 ? (c.h + c.e) / (c.ab + c.e) : 0;
+        const ip = c.ip_outs / 3;
+        // Teams with 0 IP get worst rank for ERA/WHIP
+        vals.era[tk] = ip > 0 ? c.er_num * 9 / ip : 1e9;
+        vals.whip[tk] = ip > 0 ? c.wh_num / ip : 1e9;
+      }
+      const points = {};
+      for (const tk of teamKeys) points[tk] = 0;
+      const rank = (cat, ascending) => {
+        const arr = teamKeys.map(tk => ({ tk, v: vals[cat][tk] })).sort((a,b) => ascending ? a.v - b.v : b.v - a.v);
+        let i = 0;
+        while (i < arr.length) {
+          let j = i;
+          while (j+1 < arr.length && arr[j+1].v === arr[i].v) j++;
+          const avgRank = (i + 1 + j + 1) / 2;
+          for (let k = i; k <= j; k++) points[arr[k].tk] += avgRank;
+          i = j + 1;
+        }
+      };
+      for (const cat of cats_high) rank(cat, true);   // more = better → lowest gets rank 1
+      for (const cat of cats_low)  rank(cat, false);  // less = better → highest gets rank 1
+      for (const tk of teamKeys) result[tk][d] = points[tk];
+    }
+    dailyTotalPtsCache = result;
+    return dailyTotalPtsCache;
+  }
+
   // Compute a value at date D for team+stat with cumulative-in-range semantics.
   // For counting stats: sum of daily values from rangeFrom to D.
   // For rate stats: proper cumulative (sum ER × 9 / sum IP), computed across dates from rangeFrom to D.
-  function makeSeries(days, stat, dates, useCum) {
+  function makeSeries(days, stat, dates, useCum, teamKey, allCache, fullDateArr) {
     const pts = [];
     let cum_h = 0, cum_ab = 0, cum_e = 0, cum_ip = 0, cum_er = 0, cum_wh = 0;
     let running = 0;
+    if (stat === "total_pts") {
+      const dtp = ensureDailyTotalPts(allCache, fullDateArr);
+      for (const d of dates) {
+        const v = dtp[teamKey]?.[d];
+        pts.push({ d, v: (v == null || isNaN(v)) ? null : v });
+      }
+      return pts;
+    }
     for (const d of dates) {
       const s = days[d] || {};
       let v;
@@ -904,8 +974,7 @@ function initApp(DATA) {
             <div class="ctrl-lab-row">
               <label class="ctrl-lab">Stats <span class="ctrl-hint">(multi-select · shift-click = isolate)</span></label>
               <div class="mini-actions">
-                <button id="stats-all">All</button>
-                <button id="stats-none">Clear</button>
+                <button id="stats-toggle">Select all</button>
               </div>
             </div>
             <div class="chart-stats-grid">${statChecks}</div>
@@ -927,8 +996,7 @@ function initApp(DATA) {
         </div>
         <div class="chart-teams">
           <div class="chart-teams-actions">
-            <button id="teams-all">Select all</button>
-            <button id="teams-none">Clear</button>
+            <button id="teams-toggle">Select all</button>
           </div>
           <div class="chart-teams-grid">${teamCheckboxes}</div>
         </div>
@@ -963,7 +1031,7 @@ function initApp(DATA) {
         for (const tk of chartState.selectedTeams) {
           const days = cache[tk] || {};
           for (const stat of stats) {
-            const pts = makeSeries(days, stat, inRange, chartState.cumulative);
+            const pts = makeSeries(days, stat, inRange, chartState.cumulative, tk, cache, dateArr);
             const key = `${tk}|${stat}`;
             seriesCache[key] = pts;
             series.push({ tk, stat, pts, color: teamsMeta[tk].color, dash: STAT_DASH[stats.indexOf(stat) % STAT_DASH.length] });
@@ -1280,12 +1348,13 @@ function initApp(DATA) {
           chartState.selectedStats.clear();
           chartState.selectedStats.add(st);
           document.querySelectorAll(".stat-cb input").forEach(i => { i.checked = i.getAttribute("data-stat") === st; });
+          updateStatToggleLabel && updateStatToggleLabel();
           drawChart();
           return;
         }
-        // Native checkbox toggle happens automatically; sync state after
         setTimeout(() => {
           if (input.checked) chartState.selectedStats.add(st); else chartState.selectedStats.delete(st);
+          updateStatToggleLabel && updateStatToggleLabel();
           drawChart();
         }, 0);
       }));
@@ -1297,24 +1366,30 @@ function initApp(DATA) {
           chartState.selectedTeams.clear();
           chartState.selectedTeams.add(tk);
           document.querySelectorAll(".team-cb input").forEach(i => { i.checked = i.getAttribute("data-team") === tk; });
+          updateTeamToggleLabel && updateTeamToggleLabel();
           drawChart();
           return;
         }
         setTimeout(() => {
           if (input.checked) chartState.selectedTeams.add(tk); else chartState.selectedTeams.delete(tk);
+          updateTeamToggleLabel && updateTeamToggleLabel();
           drawChart();
         }, 0);
       }));
-      document.getElementById("stats-all").addEventListener("click", () => {
-        for (const k of Object.keys(CHART_STAT_META)) chartState.selectedStats.add(k);
-        document.querySelectorAll(".stat-cb input").forEach(i => i.checked = true);
+      const allStatKeys = Object.keys(CHART_STAT_META);
+      const updateStatToggleLabel = () => {
+        const btn = document.getElementById("stats-toggle");
+        if (btn) btn.textContent = chartState.selectedStats.size === allStatKeys.length ? "Deselect all" : "Select all";
+      };
+      document.getElementById("stats-toggle").addEventListener("click", () => {
+        const allSelected = chartState.selectedStats.size === allStatKeys.length;
+        if (allSelected) chartState.selectedStats.clear();
+        else for (const k of allStatKeys) chartState.selectedStats.add(k);
+        document.querySelectorAll(".stat-cb input").forEach(i => { i.checked = !allSelected; });
+        updateStatToggleLabel();
         drawChart();
       });
-      document.getElementById("stats-none").addEventListener("click", () => {
-        chartState.selectedStats.clear();
-        document.querySelectorAll(".stat-cb input").forEach(i => i.checked = false);
-        drawChart();
-      });
+      updateStatToggleLabel();
       document.getElementById("chart-from").addEventListener("change", e => { chartState.zoomFrom = e.target.value; drawChart(); });
       document.getElementById("chart-to").addEventListener("change", e => { chartState.zoomTo = e.target.value; drawChart(); });
       document.getElementById("chart-cum").addEventListener("change", e => { chartState.cumulative = e.target.checked; drawChart(); });
@@ -1324,16 +1399,20 @@ function initApp(DATA) {
         document.getElementById("chart-to").value = chartState.zoomTo;
         drawChart();
       });
-      document.getElementById("teams-all").addEventListener("click", () => {
-        for (const tk of Object.keys(teamsMeta)) chartState.selectedTeams.add(tk);
-        document.querySelectorAll(".team-cb input").forEach(i => i.checked = true);
+      const allTeamKeys = Object.keys(teamsMeta);
+      const updateTeamToggleLabel = () => {
+        const btn = document.getElementById("teams-toggle");
+        if (btn) btn.textContent = chartState.selectedTeams.size === allTeamKeys.length ? "Deselect all" : "Select all";
+      };
+      document.getElementById("teams-toggle").addEventListener("click", () => {
+        const allSelected = chartState.selectedTeams.size === allTeamKeys.length;
+        if (allSelected) chartState.selectedTeams.clear();
+        else for (const tk of allTeamKeys) chartState.selectedTeams.add(tk);
+        document.querySelectorAll(".team-cb input").forEach(i => { i.checked = !allSelected; });
+        updateTeamToggleLabel();
         drawChart();
       });
-      document.getElementById("teams-none").addEventListener("click", () => {
-        chartState.selectedTeams.clear();
-        document.querySelectorAll(".team-cb input").forEach(i => i.checked = false);
-        drawChart();
-      });
+      updateTeamToggleLabel();
 
       drawChart();
     }).catch(err => {
