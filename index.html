@@ -133,8 +133,12 @@
   .chart-svg-wrap { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 16px 8px; position:relative; user-select:none; }
   .chart-svg-wrap svg { width:100%; height:auto; display:block; }
   .chart-hint { color:var(--text-mute); font:500 11px/1.4 var(--mono); margin-top:8px; }
-  .chart-stats { flex:1 1 220px; }
+  .chart-stats { flex:1 1 320px; }
   .chart-stats-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(66px, 1fr)); gap:4px 8px; margin-top:2px; }
+  .chart-stats-groups { display:flex; gap:14px; margin-top:2px; flex-wrap:wrap; }
+  .stat-group { flex:1 1 100px; min-width:100px; }
+  .stat-group-lab { color:var(--text-mute); font:600 9px/1 var(--mono); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:4px; opacity:0.7; }
+  .stat-group-items { display:flex; flex-wrap:wrap; gap:2px 8px; }
   .stat-cb { display:inline-flex; align-items:center; gap:6px; padding:2px 4px; cursor:pointer; font:500 11.5px/1.2 var(--mono); color:var(--text-dim); user-select:none; }
   .stat-cb input { accent-color:var(--accent); }
   .stat-cb:hover { color:var(--text); }
@@ -756,14 +760,23 @@ function initApp(DATA) {
   const TEAM_COLORS = ["#48d597","#6ea3ff","#f2603a","#ffb44a","#b384b5","#ff7200","#779de3","#cbc8ba","#7ed7a6","#007a6c","#e04b7a","#4dbfd6"];
   const STAT_DASH = ["", "6,3", "2,3", "10,3,2,3", "1,3"];   // solid, dashed, dotted, dash-dot, dense-dotted
   const CHART_STAT_META = {
-    total_pts:{lab:"Total pts", counting:false, special:"total_pts", fmt:v=>v.toFixed(1)},
-    r:{lab:"R", counting:true}, hr:{lab:"HR", counting:true}, rbi:{lab:"RBI", counting:true},
-    sb:{lab:"SB", counting:true}, k:{lab:"K", counting:true}, w:{lab:"W", counting:true}, sv:{lab:"SV", counting:true},
-    obp:{lab:"OBP", counting:false, fmt:v=>v.toFixed(3).replace(/^0/,"")},
-    era:{lab:"ERA", counting:false, fmt:v=>v.toFixed(2)},
-    whip:{lab:"WHIP", counting:false, fmt:v=>v.toFixed(2)},
-    h:{lab:"H", counting:true}, ab:{lab:"AB", counting:true}, ip:{lab:"IP", counting:true},
+    total_pts:{lab:"Total pts", counting:false, group:"overall", special:"total_pts", fmt:v=>v.toFixed(1)},
+    r:  {lab:"R",   counting:true,  group:"hitting"},
+    hr: {lab:"HR",  counting:true,  group:"hitting"},
+    rbi:{lab:"RBI", counting:true,  group:"hitting"},
+    sb: {lab:"SB",  counting:true,  group:"hitting"},
+    obp:{lab:"OBP", counting:false, group:"hitting", fmt:v=>v.toFixed(3).replace(/^0/,"")},
+    w:  {lab:"W",   counting:true,  group:"pitching"},
+    sv: {lab:"SV",  counting:true,  group:"pitching"},
+    k:  {lab:"K",   counting:true,  group:"pitching"},
+    era:{lab:"ERA", counting:false, group:"pitching", fmt:v=>v.toFixed(2)},
+    whip:{lab:"WHIP", counting:false, group:"pitching", fmt:v=>v.toFixed(2)},
   };
+  const STAT_GROUPS = [
+    { key: "overall",  lab: "Overall" },
+    { key: "hitting",  lab: "Hitting" },
+    { key: "pitching", lab: "Pitching" },
+  ];
   const chartState = {
     selectedStats: new Set(["r"]),  // multi-select
     selectedTeams: new Set(),
@@ -956,11 +969,19 @@ function initApp(DATA) {
       if (!chartState.zoomFrom) chartState.zoomFrom = chartState.dateFrom;
       if (!chartState.zoomTo) chartState.zoomTo = chartState.dateTo;
 
-      const statChecks = Object.entries(CHART_STAT_META).map(([k,m]) => `
-        <label class="stat-cb">
-          <input type="checkbox" data-stat="${k}" ${chartState.selectedStats.has(k)?"checked":""}>
-          <span>${m.lab}</span>
-        </label>`).join("");
+      const statChecks = STAT_GROUPS.map(g => {
+        const entries = Object.entries(CHART_STAT_META).filter(([, m]) => m.group === g.key);
+        if (!entries.length) return "";
+        const items = entries.map(([k, m]) => `
+          <label class="stat-cb">
+            <input type="checkbox" data-stat="${k}" ${chartState.selectedStats.has(k)?"checked":""}>
+            <span>${m.lab}</span>
+          </label>`).join("");
+        return `<div class="stat-group">
+          <div class="stat-group-lab">${g.lab}</div>
+          <div class="stat-group-items">${items}</div>
+        </div>`;
+      }).join("");
       const teamCheckboxes = Object.entries(teamsMeta).map(([tk, m]) => `
         <label class="team-cb">
           <input type="checkbox" data-team="${tk}" ${chartState.selectedTeams.has(tk)?"checked":""}>
@@ -977,7 +998,7 @@ function initApp(DATA) {
                 <button id="stats-toggle">Select all</button>
               </div>
             </div>
-            <div class="chart-stats-grid">${statChecks}</div>
+            <div class="chart-stats-groups">${statChecks}</div>
           </div>
           <div class="ctrl">
             <label class="ctrl-lab">From</label>
