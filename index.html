@@ -148,6 +148,14 @@
   .chart-tooltip .tt-name { color:var(--text-dim); font-size:11px; flex:1; }
   .chart-tooltip .tt-stat { color:var(--text); font-family:var(--mono); font-size:11.5px; font-weight:600; margin-left:6px; }
   .chart-tooltip .tt-stat .tt-lab { color:var(--text-mute); font-weight:500; margin-right:3px; font-size:10px; }
+  .chart-range-bar { display:flex; align-items:center; justify-content:space-between; margin:2px 4px 6px; }
+  .chart-range-label { font:700 15px/1.2 var(--sans); color:var(--text); font-variant-numeric:tabular-nums; }
+  .chart-range-dates { font-family:var(--mono); }
+  .chart-range-count { color:var(--text-mute); font:500 12px/1.2 var(--mono); font-weight:500; margin-left:8px; }
+  .chart-minibrush { display:block; width:100%; height:44px; margin-top:6px; }
+  .chart-minibrush rect, .chart-minibrush line { }
+  .chart-minibrush #mb-handle-l:hover rect, .chart-minibrush #mb-handle-r:hover rect { fill:var(--best); }
+  .chart-minibrush #mb-window:hover { opacity:0.5 !important; }
 
   /* Payments tab */
   .pay-summary { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:24px; }
@@ -775,22 +783,31 @@ function initApp(DATA) {
     return dailyCache;
   }
 
-  // Monotone-cubic Bezier "d" attribute from an array of {x,y} points (smooth line).
+  // Fritsch–Carlson monotone cubic Hermite → SVG cubic Bezier segments.
+  // Guarantees the interpolated curve stays MONOTONE between data points and
+  // never overshoots the data range (unlike naive Catmull-Rom/Bezier).
   function smoothPath(pts) {
-    if (!pts.length) return "";
-    if (pts.length === 1) return `M${pts[0].x},${pts[0].y}`;
+    const n = pts.length;
+    if (n === 0) return "";
+    if (n === 1) return `M${pts[0].x},${pts[0].y}`;
+    if (n === 2) return `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)} L${pts[1].x.toFixed(1)},${pts[1].y.toFixed(1)}`;
+    const dx = new Array(n - 1), dy = new Array(n - 1), m = new Array(n - 1);
+    for (let i = 0; i < n - 1; i++) { dx[i] = pts[i+1].x - pts[i].x; dy[i] = pts[i+1].y - pts[i].y; m[i] = dy[i] / dx[i]; }
+    const t = new Array(n);
+    t[0] = m[0]; t[n-1] = m[n-2];
+    for (let i = 1; i < n - 1; i++) t[i] = (m[i-1] * m[i] <= 0) ? 0 : (m[i-1] + m[i]) / 2;
+    // Fritsch–Carlson correction
+    for (let i = 0; i < n - 1; i++) {
+      if (m[i] === 0) { t[i] = 0; t[i+1] = 0; continue; }
+      const a = t[i] / m[i], b = t[i+1] / m[i];
+      const h = Math.hypot(a, b);
+      if (h > 3) { const s = 3 / h; t[i] = s * a * m[i]; t[i+1] = s * b * m[i]; }
+    }
     let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p0 = pts[i === 0 ? 0 : i - 1];
-      const p1 = pts[i];
-      const p2 = pts[i + 1];
-      const p3 = pts[i + 2 < pts.length ? i + 2 : i + 1];
-      const t = 0.25;  // tension
-      const c1x = p1.x + (p2.x - p0.x) * t;
-      const c1y = p1.y + (p2.y - p0.y) * t;
-      const c2x = p2.x - (p3.x - p1.x) * t;
-      const c2y = p2.y - (p3.y - p1.y) * t;
-      d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+    for (let i = 0; i < n - 1; i++) {
+      const x1 = pts[i].x + dx[i] / 3, y1 = pts[i].y + t[i] * dx[i] / 3;
+      const x2 = pts[i+1].x - dx[i] / 3, y2 = pts[i+1].y - t[i+1] * dx[i] / 3;
+      d += ` C${x1.toFixed(1)},${y1.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)} ${pts[i+1].x.toFixed(1)},${pts[i+1].y.toFixed(1)}`;
     }
     return d;
   }
@@ -895,9 +912,6 @@ function initApp(DATA) {
               <span>Cumulative</span>
             </label>
           </div>
-          <div class="ctrl chart-cum">
-            <button id="chart-reset" class="chart-reset-btn">Reset zoom</button>
-          </div>
         </div>
         <div class="chart-teams">
           <div class="chart-teams-actions">
@@ -906,11 +920,16 @@ function initApp(DATA) {
           </div>
           <div class="chart-teams-grid">${teamCheckboxes}</div>
         </div>
+        <div class="chart-range-bar">
+          <div class="chart-range-label" id="chart-range-lab"></div>
+          <button id="chart-reset" class="chart-reset-btn">Reset zoom</button>
+        </div>
         <div class="chart-svg-wrap">
           <svg id="chart-svg" viewBox="0 0 900 420" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg"></svg>
           <div class="chart-tooltip" id="chart-tt"></div>
         </div>
-        <div class="chart-hint">Drag on the plot to zoom to a range. Reset zoom to see the full window again. Hover to see values at that date.</div>
+        <svg id="chart-minibrush" class="chart-minibrush" viewBox="0 0 900 44" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="chart-hint">Drag on the plot to zoom. Drag the brush handles below to extend or shrink the range.</div>
       `;
 
       const svgEl = document.getElementById("chart-svg");
@@ -1037,6 +1056,100 @@ function initApp(DATA) {
         `;
 
         plotState = { PAD, IW, IH, W, H, inRange, xForDate, yForPoint, series, statRange, stats, multiStat };
+
+        // Update range label (bold, above chart) + Reset visibility
+        const zoomed = chartState.zoomFrom !== chartState.dateFrom || chartState.zoomTo !== chartState.dateTo;
+        const fmtD = d => `${d.slice(5,7)}/${d.slice(8,10)}`;
+        const rangeLab = document.getElementById("chart-range-lab");
+        const rangeStr = chartState.zoomFrom === chartState.zoomTo
+          ? fmtD(chartState.zoomFrom)
+          : `${fmtD(chartState.zoomFrom)} – ${fmtD(chartState.zoomTo)}`;
+        const daysCount = inRange.length;
+        rangeLab.innerHTML = `<span class="chart-range-dates">${rangeStr}</span> <span class="chart-range-count">(${daysCount} day${daysCount===1?"":"s"})</span>`;
+        const resetBtn = document.getElementById("chart-reset");
+        resetBtn.style.visibility = zoomed ? "visible" : "hidden";
+
+        // Mini-brush below chart
+        drawMinibrush();
+      };
+
+      const drawMinibrush = () => {
+        const mb = document.getElementById("chart-minibrush");
+        if (!mb) return;
+        const W = 900, H = 44, PAD_X = 10;
+        const IW = W - 2 * PAD_X;
+        const N = dateArr.length;
+        if (!N) { mb.innerHTML = ""; return; }
+        const iZoomFrom = dateArr.indexOf(chartState.zoomFrom);
+        const iZoomTo = dateArr.indexOf(chartState.zoomTo);
+        const xStart = PAD_X + (iZoomFrom / (N - 1 || 1)) * IW;
+        const xEnd   = PAD_X + (iZoomTo   / (N - 1 || 1)) * IW;
+        const midY = H / 2;
+        mb.innerHTML = `
+          <rect x="${PAD_X}" y="${midY - 6}" width="${IW}" height="12" rx="6" fill="var(--panel-3)" stroke="var(--border-soft)"/>
+          <rect id="mb-window" x="${xStart}" y="${midY - 6}" width="${Math.max(2, xEnd - xStart)}" height="12" fill="var(--accent)" opacity="0.35" style="cursor:grab"/>
+          <line x1="${PAD_X}" x2="${W - PAD_X}" y1="${midY}" y2="${midY}" stroke="var(--text-mute)" stroke-opacity="0.25" stroke-width="1"/>
+          <g id="mb-handle-l" style="cursor:ew-resize">
+            <rect x="${xStart - 5}" y="${midY - 10}" width="10" height="20" rx="3" fill="var(--accent)"/>
+            <line x1="${xStart - 1}" x2="${xStart - 1}" y1="${midY - 6}" y2="${midY + 6}" stroke="var(--bg)" stroke-width="0.7"/>
+            <line x1="${xStart + 1}" x2="${xStart + 1}" y1="${midY - 6}" y2="${midY + 6}" stroke="var(--bg)" stroke-width="0.7"/>
+          </g>
+          <g id="mb-handle-r" style="cursor:ew-resize">
+            <rect x="${xEnd - 5}" y="${midY - 10}" width="10" height="20" rx="3" fill="var(--accent)"/>
+            <line x1="${xEnd - 1}" x2="${xEnd - 1}" y1="${midY - 6}" y2="${midY + 6}" stroke="var(--bg)" stroke-width="0.7"/>
+            <line x1="${xEnd + 1}" x2="${xEnd + 1}" y1="${midY - 6}" y2="${midY + 6}" stroke="var(--bg)" stroke-width="0.7"/>
+          </g>
+          <text x="${PAD_X}" y="${H - 3}" fill="var(--text-mute)" font-size="9" font-family="var(--mono)">${fmtDMini(dateArr[0])}</text>
+          <text x="${W - PAD_X}" y="${H - 3}" fill="var(--text-mute)" font-size="9" font-family="var(--mono)" text-anchor="end">${fmtDMini(dateArr[N-1])}</text>
+        `;
+        wireMinibrush(mb, PAD_X, IW, N);
+      };
+      const fmtDMini = d => `${d.slice(5,7)}/${d.slice(8,10)}`;
+      const wireMinibrush = (mb, PAD_X, IW, N) => {
+        const svgW = () => mb.getBoundingClientRect().width;
+        const localX = (clientX) => (clientX - mb.getBoundingClientRect().left) * (900 / svgW());
+        const xToIndex = (x) => {
+          const t = (x - PAD_X) / IW;
+          return Math.max(0, Math.min(N - 1, Math.round(t * (N - 1))));
+        };
+        let drag = null;   // {type: 'left'|'right'|'window', startX, startFrom, startTo}
+        const startDrag = (type, e) => {
+          drag = { type, startX: localX(e.clientX), startFrom: dateArr.indexOf(chartState.zoomFrom), startTo: dateArr.indexOf(chartState.zoomTo) };
+          e.preventDefault();
+        };
+        mb.querySelector("#mb-handle-l")?.addEventListener("mousedown", e => startDrag("left", e));
+        mb.querySelector("#mb-handle-r")?.addEventListener("mousedown", e => startDrag("right", e));
+        mb.querySelector("#mb-window")?.addEventListener("mousedown", e => startDrag("window", e));
+        const onMove = e => {
+          if (!drag) return;
+          const cur = localX(e.clientX);
+          const dx = cur - drag.startX;
+          const iDx = Math.round(dx / IW * (N - 1));
+          let newFrom = drag.startFrom, newTo = drag.startTo;
+          if (drag.type === "left")  newFrom = Math.max(0, Math.min(drag.startTo, drag.startFrom + iDx));
+          if (drag.type === "right") newTo   = Math.min(N - 1, Math.max(drag.startFrom, drag.startTo + iDx));
+          if (drag.type === "window") {
+            const width = drag.startTo - drag.startFrom;
+            newFrom = Math.max(0, Math.min(N - 1 - width, drag.startFrom + iDx));
+            newTo = newFrom + width;
+          }
+          if (newFrom !== dateArr.indexOf(chartState.zoomFrom) || newTo !== dateArr.indexOf(chartState.zoomTo)) {
+            chartState.zoomFrom = dateArr[newFrom];
+            chartState.zoomTo = dateArr[newTo];
+            document.getElementById("chart-from").value = chartState.zoomFrom;
+            document.getElementById("chart-to").value = chartState.zoomTo;
+            drawChart();
+          }
+        };
+        const onUp = () => { drag = null; };
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+        // Also touch support
+        mb.querySelector("#mb-handle-l")?.addEventListener("touchstart", e => startDrag("left", e.touches[0]));
+        mb.querySelector("#mb-handle-r")?.addEventListener("touchstart", e => startDrag("right", e.touches[0]));
+        mb.querySelector("#mb-window")?.addEventListener("touchstart", e => startDrag("window", e.touches[0]));
+        window.addEventListener("touchmove", e => { if (drag) { onMove(e.touches[0]); e.preventDefault(); } }, {passive:false});
+        window.addEventListener("touchend", onUp);
       };
 
       const teamName = tk => teamsMeta[tk]?.name || tk;
