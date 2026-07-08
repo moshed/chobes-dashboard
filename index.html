@@ -112,6 +112,28 @@
   .stat-line .pair .lab { color:var(--text-mute); margin-right:4px; }
   .stat-line .pair .val { color:var(--text); }
 
+  /* Chart tab */
+  .tab.chart.active { border-bottom-color:var(--accent); }
+  .chart-loading { color:var(--text-mute); padding:24px; }
+  .chart-controls { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
+  .chart-controls .ctrl { display:flex; flex-direction:column; gap:4px; }
+  .chart-controls .ctrl-lab { color:var(--text-mute); font:600 10px/1 var(--mono); letter-spacing:0.1em; text-transform:uppercase; }
+  .chart-controls select, .chart-controls input[type=date] { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:6px; padding:6px 10px; color:var(--text); font:500 13px/1 var(--sans); font-family:var(--mono); }
+  .chart-controls select:focus, .chart-controls input:focus { outline:1px solid var(--accent); }
+  .chart-cum { justify-content:flex-end; align-self:flex-end; }
+  .chart-teams { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:10px 14px; margin-bottom:12px; }
+  .chart-teams-actions { display:flex; gap:8px; margin-bottom:8px; }
+  .chart-teams-actions button { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:6px; padding:4px 12px; font:600 11px/1 var(--mono); color:var(--text-dim); cursor:pointer; }
+  .chart-teams-actions button:hover { background:var(--panel-3); color:var(--text); }
+  .chart-teams-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:6px 12px; }
+  .team-cb { display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; font:500 12.5px/1.2 var(--sans); color:var(--text-dim); user-select:none; }
+  .team-cb input { accent-color:var(--accent); }
+  .team-cb .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .team-cb:hover { color:var(--text); }
+  .chart-svg-wrap { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 16px 8px; }
+  .chart-svg-wrap svg { width:100%; height:auto; display:block; }
+  .chart-hint { color:var(--text-mute); font:500 11px/1.4 var(--mono); margin-top:8px; }
+
   /* Payments tab */
   .pay-summary { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:24px; }
   .pay-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px 16px; }
@@ -295,6 +317,14 @@ function initApp(DATA) {
     nav.appendChild(b);
     monthButtons[m] = b;
   });
+  // Chart tab
+  const chartTab = document.createElement("button");
+  chartTab.className = "tab chart";
+  chartTab.setAttribute("data-slug", "chart");
+  chartTab.innerHTML = `📈 Chart`;
+  chartTab.addEventListener("click", () => { location.hash = "#chart"; });
+  nav.appendChild(chartTab);
+
   // Payments tab
   const payTab = document.createElement("button");
   payTab.className = "tab money";
@@ -310,6 +340,9 @@ function initApp(DATA) {
     if (slug === "payments") {
       payTab.classList.add("active");
       renderPayments();
+    } else if (slug === "chart") {
+      chartTab.classList.add("active");
+      renderChart();
     } else if (slug in monthBySlug) {
       const m = monthBySlug[slug];
       monthButtons[m].classList.add("active");
@@ -319,7 +352,7 @@ function initApp(DATA) {
       monthButtons[m].classList.add("active");
       renderMonth(m);
     }
-    window.scrollTo({top: 0});
+    try { window.scrollTo({top: 0}); } catch {}
   }
   window.addEventListener("hashchange", route);
 
@@ -686,6 +719,212 @@ function initApp(DATA) {
           </div>`;
         row.classList.add("open");
       });
+    });
+  }
+
+  // ── Chart tab ────────────────────────────────────────────────────────────
+  let dailyCache = null;  // {teamKey: {date: statsObj}}
+  const TEAM_COLORS = ["#48d597","#6ea3ff","#f2603a","#ffb44a","#b384b5","#ff7200","#779de3","#cbc8ba","#7ed7a6","#007a6c","#e04b7a","#4dbfd6"];
+  const CHART_STAT_META = {
+    r:{lab:"R", counting:true}, hr:{lab:"HR", counting:true}, rbi:{lab:"RBI", counting:true},
+    sb:{lab:"SB", counting:true}, k:{lab:"K", counting:true}, w:{lab:"W", counting:true}, sv:{lab:"SV", counting:true},
+    obp:{lab:"OBP", counting:false, fmt:v=>v.toFixed(3).replace(/^0/,"")},
+    era:{lab:"ERA", counting:false, fmt:v=>v.toFixed(2)},
+    whip:{lab:"WHIP", counting:false, fmt:v=>v.toFixed(2)},
+    h:{lab:"H", counting:true}, ab:{lab:"AB", counting:true}, ip:{lab:"IP", counting:true},
+  };
+  const chartState = {
+    stat: "r",
+    selectedTeams: new Set(),  // team_key set
+    dateFrom: null,
+    dateTo: null,
+    cumulative: true,
+  };
+
+  async function loadDailyCache() {
+    if (dailyCache) return dailyCache;
+    dailyCache = {};
+    const PAGE = 1000;
+    let offset = 0;
+    while (true) {
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/chobes_daily?select=team_key,date,stats&limit=${PAGE}&offset=${offset}&order=date.asc`,
+        { headers: {apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}`} });
+      const rows = await r.json();
+      for (const row of rows) {
+        dailyCache[row.team_key] ??= {};
+        dailyCache[row.team_key][row.date] = row.stats;
+      }
+      if (rows.length < PAGE) break;
+      offset += PAGE;
+    }
+    return dailyCache;
+  }
+
+  function renderChart() {
+    noteEl.hidden = true;
+    contentEl.innerHTML = `<div class="chart-loading">Loading daily data…</div>`;
+
+    loadDailyCache().then(cache => {
+      // Discover teams from cache + snapshot; map team_key → {name, color}
+      const teamsMeta = {};
+      const anyMonth = DATA.months[months[0]].teams;
+      anyMonth.forEach((t, i) => { teamsMeta[t.team_key] = { name: t.team_name, color: TEAM_COLORS[i % TEAM_COLORS.length] }; });
+      // Initialize selection if empty
+      if (chartState.selectedTeams.size === 0) {
+        for (const tk of Object.keys(teamsMeta)) chartState.selectedTeams.add(tk);
+      }
+      // Date bounds
+      const allDates = new Set();
+      for (const tk of Object.keys(cache)) for (const d of Object.keys(cache[tk])) allDates.add(d);
+      const dateArr = [...allDates].sort();
+      if (!chartState.dateFrom) chartState.dateFrom = dateArr[0];
+      if (!chartState.dateTo)   chartState.dateTo   = dateArr[dateArr.length-1];
+
+      const statOpts = Object.entries(CHART_STAT_META).map(([k,m]) =>
+        `<option value="${k}"${chartState.stat===k?' selected':''}>${m.lab}</option>`).join("");
+      const teamCheckboxes = Object.entries(teamsMeta).map(([tk, m]) => `
+        <label class="team-cb">
+          <input type="checkbox" data-team="${tk}" ${chartState.selectedTeams.has(tk)?"checked":""}>
+          <span class="dot" style="background:${m.color}"></span>
+          <span>${esc(m.name)}</span>
+        </label>
+      `).join("");
+
+      contentEl.innerHTML = `
+        <div class="chart-controls">
+          <div class="ctrl">
+            <label class="ctrl-lab">Stat</label>
+            <select id="chart-stat">${statOpts}</select>
+          </div>
+          <div class="ctrl">
+            <label class="ctrl-lab">From</label>
+            <input type="date" id="chart-from" value="${chartState.dateFrom}" min="${dateArr[0]}" max="${dateArr[dateArr.length-1]}">
+          </div>
+          <div class="ctrl">
+            <label class="ctrl-lab">To</label>
+            <input type="date" id="chart-to" value="${chartState.dateTo}" min="${dateArr[0]}" max="${dateArr[dateArr.length-1]}">
+          </div>
+          <div class="ctrl chart-cum">
+            <label class="ctrl-lab" style="display:inline-flex;align-items:center;gap:6px;">
+              <input type="checkbox" id="chart-cum" ${chartState.cumulative?"checked":""}>
+              <span>Cumulative</span>
+            </label>
+          </div>
+        </div>
+        <div class="chart-teams">
+          <div class="chart-teams-actions">
+            <button id="teams-all">Select all</button>
+            <button id="teams-none">Clear</button>
+          </div>
+          <div class="chart-teams-grid">${teamCheckboxes}</div>
+        </div>
+        <div class="chart-svg-wrap" id="chart-svg-wrap"></div>
+        <div class="chart-hint">Tap the legend dots to isolate a single team; Shift-click to add.</div>
+      `;
+
+      const drawChart = () => {
+        const stat = chartState.stat;
+        const meta = CHART_STAT_META[stat];
+        const isRate = !meta.counting;
+        const useCum = chartState.cumulative && meta.counting;
+
+        // Build series for each selected team
+        const seriesByTeam = {};
+        const from = chartState.dateFrom, to = chartState.dateTo;
+        for (const tk of chartState.selectedTeams) {
+          const days = cache[tk] || {};
+          const pts = [];
+          let running = 0;
+          for (const d of dateArr) {
+            if (d < from || d > to) continue;
+            const s = days[d] || {};
+            let v = s[stat];
+            if (stat === "ip") v = (s.ip_outs ?? 0) / 3;
+            if (v == null || isNaN(v)) v = 0;
+            if (useCum) { running += v; v = running; }
+            pts.push({ d, v });
+          }
+          seriesByTeam[tk] = pts;
+        }
+
+        // Compute scales
+        const W = 900, H = 380, PAD = { top: 20, right: 20, bottom: 40, left: 55 };
+        const IW = W - PAD.left - PAD.right, IH = H - PAD.top - PAD.bottom;
+        const allDatesInRange = dateArr.filter(d => d >= from && d <= to);
+        const xForDate = d => {
+          const i = allDatesInRange.indexOf(d);
+          return PAD.left + (allDatesInRange.length > 1 ? (i / (allDatesInRange.length - 1)) * IW : IW / 2);
+        };
+        let vals = [];
+        for (const pts of Object.values(seriesByTeam)) for (const p of pts) vals.push(p.v);
+        let vMin = vals.length ? Math.min(0, Math.min(...vals)) : 0;
+        let vMax = vals.length ? Math.max(...vals) : 1;
+        if (vMax === vMin) vMax = vMin + 1;
+        if (isRate && !useCum) { vMin = Math.min(...vals); vMax = Math.max(...vals); if (vMax === vMin) vMax = vMin + 0.01; }
+        const yForV = v => PAD.top + IH - ((v - vMin) / (vMax - vMin)) * IH;
+
+        // Grid + axis
+        const yTicks = 5;
+        let gridLines = "";
+        for (let i = 0; i <= yTicks; i++) {
+          const v = vMin + (i / yTicks) * (vMax - vMin);
+          const y = yForV(v);
+          const vLab = meta.fmt ? meta.fmt(v) : (Math.abs(v) >= 10 ? Math.round(v) : v.toFixed(1));
+          gridLines += `<line x1="${PAD.left}" x2="${PAD.left+IW}" y1="${y}" y2="${y}" stroke="var(--border-soft)" stroke-width="1"/>`;
+          gridLines += `<text x="${PAD.left - 8}" y="${y + 4}" fill="var(--text-mute)" font-size="10" text-anchor="end" font-family="var(--mono)">${vLab}</text>`;
+        }
+        // X ticks: ~6 evenly spaced
+        const xTicks = Math.min(6, allDatesInRange.length);
+        let xLabels = "";
+        for (let i = 0; i < xTicks; i++) {
+          const idx = Math.round((i / (xTicks - 1)) * (allDatesInRange.length - 1));
+          const d = allDatesInRange[idx];
+          if (!d) continue;
+          const x = xForDate(d);
+          const mm = d.slice(5,7), dd = d.slice(8,10);
+          xLabels += `<text x="${x}" y="${H - PAD.bottom + 18}" fill="var(--text-mute)" font-size="10" text-anchor="middle" font-family="var(--mono)">${mm}/${dd}</text>`;
+        }
+
+        // Lines
+        let paths = "";
+        for (const [tk, pts] of Object.entries(seriesByTeam)) {
+          if (!pts.length) continue;
+          const color = teamsMeta[tk].color;
+          const d = pts.map((p, i) => `${i===0?"M":"L"}${xForDate(p.d).toFixed(1)},${yForV(p.v).toFixed(1)}`).join(" ");
+          paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" opacity="0.85"/>`;
+        }
+
+        const svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+          ${gridLines}${paths}
+          <line x1="${PAD.left}" x2="${PAD.left}" y1="${PAD.top}" y2="${PAD.top+IH}" stroke="var(--border)" stroke-width="1"/>
+          <line x1="${PAD.left}" x2="${PAD.left+IW}" y1="${PAD.top+IH}" y2="${PAD.top+IH}" stroke="var(--border)" stroke-width="1"/>
+          ${xLabels}
+        </svg>`;
+        document.getElementById("chart-svg-wrap").innerHTML = svg;
+      };
+      drawChart();
+
+      document.getElementById("chart-stat").addEventListener("change", e => { chartState.stat = e.target.value; drawChart(); });
+      document.getElementById("chart-from").addEventListener("change", e => { chartState.dateFrom = e.target.value; drawChart(); });
+      document.getElementById("chart-to").addEventListener("change", e => { chartState.dateTo = e.target.value; drawChart(); });
+      document.getElementById("chart-cum").addEventListener("change", e => { chartState.cumulative = e.target.checked; drawChart(); });
+      document.querySelectorAll(".team-cb input").forEach(cb => {
+        cb.addEventListener("change", e => {
+          const tk = e.target.getAttribute("data-team");
+          if (e.target.checked) chartState.selectedTeams.add(tk); else chartState.selectedTeams.delete(tk);
+          drawChart();
+        });
+      });
+      document.getElementById("teams-all").addEventListener("click", () => {
+        for (const tk of Object.keys(teamsMeta)) chartState.selectedTeams.add(tk);
+        renderChart();
+      });
+      document.getElementById("teams-none").addEventListener("click", () => {
+        chartState.selectedTeams.clear();
+        renderChart();
+      });
+    }).catch(err => {
+      contentEl.innerHTML = `<p style='color:var(--worst);padding:24px'>Failed to load daily data: ${esc(err.message)}</p>`;
     });
   }
 
