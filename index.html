@@ -130,9 +130,24 @@
   .team-cb input { accent-color:var(--accent); }
   .team-cb .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
   .team-cb:hover { color:var(--text); }
-  .chart-svg-wrap { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 16px 8px; }
+  .chart-svg-wrap { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 16px 8px; position:relative; user-select:none; }
   .chart-svg-wrap svg { width:100%; height:auto; display:block; }
   .chart-hint { color:var(--text-mute); font:500 11px/1.4 var(--mono); margin-top:8px; }
+  .chart-stats { flex:1 1 220px; }
+  .chart-stats-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(66px, 1fr)); gap:4px 8px; margin-top:2px; }
+  .stat-cb { display:inline-flex; align-items:center; gap:6px; padding:2px 4px; cursor:pointer; font:500 11.5px/1.2 var(--mono); color:var(--text-dim); user-select:none; }
+  .stat-cb input { accent-color:var(--accent); }
+  .stat-cb:hover { color:var(--text); }
+  .ctrl-hint { color:var(--text-mute); font-weight:400; text-transform:none; letter-spacing:0; margin-left:6px; font-size:10px; }
+  .chart-reset-btn { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:6px; padding:6px 12px; font:600 11px/1 var(--mono); color:var(--text-dim); cursor:pointer; }
+  .chart-reset-btn:hover { background:var(--panel-3); color:var(--text); }
+  .chart-tooltip { position:absolute; background:var(--panel-3); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font:500 11.5px/1.4 var(--sans); color:var(--text); pointer-events:none; display:none; z-index:5; min-width:180px; max-width:280px; box-shadow:0 4px 20px rgba(0,0,0,0.4); }
+  .chart-tooltip .tt-date { font:600 10.5px/1 var(--mono); color:var(--text-mute); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px; }
+  .chart-tooltip .tt-row { display:flex; align-items:center; gap:6px; padding:2px 0; flex-wrap:wrap; }
+  .chart-tooltip .tt-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .chart-tooltip .tt-name { color:var(--text-dim); font-size:11px; flex:1; }
+  .chart-tooltip .tt-stat { color:var(--text); font-family:var(--mono); font-size:11.5px; font-weight:600; margin-left:6px; }
+  .chart-tooltip .tt-stat .tt-lab { color:var(--text-mute); font-weight:500; margin-right:3px; font-size:10px; }
 
   /* Payments tab */
   .pay-summary { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:24px; }
@@ -725,6 +740,7 @@ function initApp(DATA) {
   // ── Chart tab ────────────────────────────────────────────────────────────
   let dailyCache = null;  // {teamKey: {date: statsObj}}
   const TEAM_COLORS = ["#48d597","#6ea3ff","#f2603a","#ffb44a","#b384b5","#ff7200","#779de3","#cbc8ba","#7ed7a6","#007a6c","#e04b7a","#4dbfd6"];
+  const STAT_DASH = ["", "6,3", "2,3", "10,3,2,3", "1,3"];   // solid, dashed, dotted, dash-dot, dense-dotted
   const CHART_STAT_META = {
     r:{lab:"R", counting:true}, hr:{lab:"HR", counting:true}, rbi:{lab:"RBI", counting:true},
     sb:{lab:"SB", counting:true}, k:{lab:"K", counting:true}, w:{lab:"W", counting:true}, sv:{lab:"SV", counting:true},
@@ -734,18 +750,17 @@ function initApp(DATA) {
     h:{lab:"H", counting:true}, ab:{lab:"AB", counting:true}, ip:{lab:"IP", counting:true},
   };
   const chartState = {
-    stat: "r",
-    selectedTeams: new Set(),  // team_key set
-    dateFrom: null,
-    dateTo: null,
+    selectedStats: new Set(["r"]),  // multi-select
+    selectedTeams: new Set(),
+    dateFrom: null, dateTo: null,
     cumulative: true,
+    zoomFrom: null, zoomTo: null,   // active zoom window (subset of dateFrom/dateTo)
   };
 
   async function loadDailyCache() {
     if (dailyCache) return dailyCache;
     dailyCache = {};
-    const PAGE = 1000;
-    let offset = 0;
+    const PAGE = 1000; let offset = 0;
     while (true) {
       const r = await fetch(`${SUPABASE_URL}/rest/v1/chobes_daily?select=team_key,date,stats&limit=${PAGE}&offset=${offset}&order=date.asc`,
         { headers: {apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}`} });
@@ -760,55 +775,128 @@ function initApp(DATA) {
     return dailyCache;
   }
 
+  // Monotone-cubic Bezier "d" attribute from an array of {x,y} points (smooth line).
+  function smoothPath(pts) {
+    if (!pts.length) return "";
+    if (pts.length === 1) return `M${pts[0].x},${pts[0].y}`;
+    let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i === 0 ? 0 : i - 1];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[i + 2 < pts.length ? i + 2 : i + 1];
+      const t = 0.25;  // tension
+      const c1x = p1.x + (p2.x - p0.x) * t;
+      const c1y = p1.y + (p2.y - p0.y) * t;
+      const c2x = p2.x - (p3.x - p1.x) * t;
+      const c2y = p2.y - (p3.y - p1.y) * t;
+      d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+    }
+    return d;
+  }
+
+  // Compute a value at date D for team+stat with cumulative-in-range semantics.
+  // For counting stats: sum of daily values from rangeFrom to D.
+  // For rate stats: proper cumulative (sum ER × 9 / sum IP), computed across dates from rangeFrom to D.
+  function makeSeries(days, stat, dates, useCum) {
+    const pts = [];
+    let cum_h = 0, cum_ab = 0, cum_e = 0, cum_ip = 0, cum_er = 0, cum_wh = 0;
+    let running = 0;
+    for (const d of dates) {
+      const s = days[d] || {};
+      let v;
+      if (stat === "obp") {
+        const h = s.h ?? 0, ab = s.ab ?? 0, obp = s.obp;
+        if (useCum) {
+          // Back-derive excess PA (bb+hbp) each day where obp is defined
+          if (obp != null && obp > 0 && obp < 1 && ab > 0) {
+            const e = (obp * ab - h) / (1 - obp);
+            if (e > 0) cum_e += e;
+          }
+          cum_h += h; cum_ab += ab;
+          v = (cum_ab + cum_e) > 0 ? (cum_h + cum_e) / (cum_ab + cum_e) : null;
+        } else {
+          v = obp;
+        }
+      } else if (stat === "era" || stat === "whip") {
+        const ip_outs = s.ip_outs ?? 0;
+        if (useCum) {
+          cum_ip += ip_outs;
+          if (stat === "era") {
+            const daily_er = (s.era != null && ip_outs > 0) ? s.era * (ip_outs / 3) / 9 : 0;
+            cum_er += daily_er;
+            v = cum_ip > 0 ? cum_er * 9 / (cum_ip / 3) : null;
+          } else {
+            const daily_wh = (s.whip != null && ip_outs > 0) ? s.whip * (ip_outs / 3) : 0;
+            cum_wh += daily_wh;
+            v = cum_ip > 0 ? cum_wh / (cum_ip / 3) : null;
+          }
+        } else {
+          v = s[stat];
+        }
+      } else if (stat === "ip") {
+        v = (s.ip_outs ?? 0) / 3;
+        if (useCum) { running += v; v = running; }
+      } else {
+        // counting cats
+        v = s[stat] ?? 0;
+        if (useCum) { running += v; v = running; }
+      }
+      pts.push({ d, v: (v == null || isNaN(v)) ? null : v });
+    }
+    return pts;
+  }
+
   function renderChart() {
     noteEl.hidden = true;
     contentEl.innerHTML = `<div class="chart-loading">Loading daily data…</div>`;
-
     loadDailyCache().then(cache => {
-      // Discover teams from cache + snapshot; map team_key → {name, color}
       const teamsMeta = {};
       const anyMonth = DATA.months[months[0]].teams;
       anyMonth.forEach((t, i) => { teamsMeta[t.team_key] = { name: t.team_name, color: TEAM_COLORS[i % TEAM_COLORS.length] }; });
-      // Initialize selection if empty
-      if (chartState.selectedTeams.size === 0) {
-        for (const tk of Object.keys(teamsMeta)) chartState.selectedTeams.add(tk);
-      }
-      // Date bounds
+      if (chartState.selectedTeams.size === 0) for (const tk of Object.keys(teamsMeta)) chartState.selectedTeams.add(tk);
       const allDates = new Set();
       for (const tk of Object.keys(cache)) for (const d of Object.keys(cache[tk])) allDates.add(d);
       const dateArr = [...allDates].sort();
       if (!chartState.dateFrom) chartState.dateFrom = dateArr[0];
-      if (!chartState.dateTo)   chartState.dateTo   = dateArr[dateArr.length-1];
+      if (!chartState.dateTo) chartState.dateTo = dateArr[dateArr.length-1];
+      if (!chartState.zoomFrom) chartState.zoomFrom = chartState.dateFrom;
+      if (!chartState.zoomTo) chartState.zoomTo = chartState.dateTo;
 
-      const statOpts = Object.entries(CHART_STAT_META).map(([k,m]) =>
-        `<option value="${k}"${chartState.stat===k?' selected':''}>${m.lab}</option>`).join("");
+      const statChecks = Object.entries(CHART_STAT_META).map(([k,m]) => `
+        <label class="stat-cb">
+          <input type="checkbox" data-stat="${k}" ${chartState.selectedStats.has(k)?"checked":""}>
+          <span>${m.lab}</span>
+        </label>`).join("");
       const teamCheckboxes = Object.entries(teamsMeta).map(([tk, m]) => `
         <label class="team-cb">
           <input type="checkbox" data-team="${tk}" ${chartState.selectedTeams.has(tk)?"checked":""}>
           <span class="dot" style="background:${m.color}"></span>
           <span>${esc(m.name)}</span>
-        </label>
-      `).join("");
+        </label>`).join("");
 
       contentEl.innerHTML = `
         <div class="chart-controls">
-          <div class="ctrl">
-            <label class="ctrl-lab">Stat</label>
-            <select id="chart-stat">${statOpts}</select>
+          <div class="ctrl chart-stats">
+            <label class="ctrl-lab">Stats <span class="ctrl-hint">(multi-select overlays)</span></label>
+            <div class="chart-stats-grid">${statChecks}</div>
           </div>
           <div class="ctrl">
             <label class="ctrl-lab">From</label>
-            <input type="date" id="chart-from" value="${chartState.dateFrom}" min="${dateArr[0]}" max="${dateArr[dateArr.length-1]}">
+            <input type="date" id="chart-from" value="${chartState.zoomFrom}" min="${dateArr[0]}" max="${dateArr[dateArr.length-1]}">
           </div>
           <div class="ctrl">
             <label class="ctrl-lab">To</label>
-            <input type="date" id="chart-to" value="${chartState.dateTo}" min="${dateArr[0]}" max="${dateArr[dateArr.length-1]}">
+            <input type="date" id="chart-to" value="${chartState.zoomTo}" min="${dateArr[0]}" max="${dateArr[dateArr.length-1]}">
           </div>
           <div class="ctrl chart-cum">
             <label class="ctrl-lab" style="display:inline-flex;align-items:center;gap:6px;">
               <input type="checkbox" id="chart-cum" ${chartState.cumulative?"checked":""}>
               <span>Cumulative</span>
             </label>
+          </div>
+          <div class="ctrl chart-cum">
+            <button id="chart-reset" class="chart-reset-btn">Reset zoom</button>
           </div>
         </div>
         <div class="chart-teams">
@@ -818,111 +906,264 @@ function initApp(DATA) {
           </div>
           <div class="chart-teams-grid">${teamCheckboxes}</div>
         </div>
-        <div class="chart-svg-wrap" id="chart-svg-wrap"></div>
-        <div class="chart-hint">Tap the legend dots to isolate a single team; Shift-click to add.</div>
+        <div class="chart-svg-wrap">
+          <svg id="chart-svg" viewBox="0 0 900 420" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg"></svg>
+          <div class="chart-tooltip" id="chart-tt"></div>
+        </div>
+        <div class="chart-hint">Drag on the plot to zoom to a range. Reset zoom to see the full window again. Hover to see values at that date.</div>
       `;
 
-      const drawChart = () => {
-        const stat = chartState.stat;
-        const meta = CHART_STAT_META[stat];
-        const isRate = !meta.counting;
-        const useCum = chartState.cumulative && meta.counting;
+      const svgEl = document.getElementById("chart-svg");
+      const ttEl = document.getElementById("chart-tt");
 
-        // Build series for each selected team
-        const seriesByTeam = {};
-        const from = chartState.dateFrom, to = chartState.dateTo;
+      let seriesCache = {};   // {"team|stat": pts[]}, computed for each redraw
+      let plotState = {};     // for tooltip / brush
+
+      const drawChart = () => {
+        const stats = [...chartState.selectedStats];
+        if (stats.length === 0) { svgEl.innerHTML = `<text x="450" y="200" fill="var(--text-mute)" text-anchor="middle">Pick at least one stat.</text>`; return; }
+        const from = chartState.zoomFrom, to = chartState.zoomTo;
+        const inRange = dateArr.filter(d => d >= from && d <= to);
+        if (inRange.length === 0) { svgEl.innerHTML = `<text x="450" y="200" fill="var(--text-mute)" text-anchor="middle">Empty date range.</text>`; return; }
+
+        // Build all (team, stat) series
+        seriesCache = {};
+        const series = [];
         for (const tk of chartState.selectedTeams) {
           const days = cache[tk] || {};
-          const pts = [];
-          let running = 0;
-          for (const d of dateArr) {
-            if (d < from || d > to) continue;
-            const s = days[d] || {};
-            let v = s[stat];
-            if (stat === "ip") v = (s.ip_outs ?? 0) / 3;
-            if (v == null || isNaN(v)) v = 0;
-            if (useCum) { running += v; v = running; }
-            pts.push({ d, v });
+          for (const stat of stats) {
+            const pts = makeSeries(days, stat, inRange, chartState.cumulative);
+            const key = `${tk}|${stat}`;
+            seriesCache[key] = pts;
+            series.push({ tk, stat, pts, color: teamsMeta[tk].color, dash: STAT_DASH[stats.indexOf(stat) % STAT_DASH.length] });
           }
-          seriesByTeam[tk] = pts;
         }
 
-        // Compute scales
-        const W = 900, H = 380, PAD = { top: 20, right: 20, bottom: 40, left: 55 };
+        const W = 900, H = 420, PAD = { top: 20, right: 20, bottom: 50, left: 55 };
         const IW = W - PAD.left - PAD.right, IH = H - PAD.top - PAD.bottom;
-        const allDatesInRange = dateArr.filter(d => d >= from && d <= to);
         const xForDate = d => {
-          const i = allDatesInRange.indexOf(d);
-          return PAD.left + (allDatesInRange.length > 1 ? (i / (allDatesInRange.length - 1)) * IW : IW / 2);
+          const i = inRange.indexOf(d);
+          return PAD.left + (inRange.length > 1 ? (i / (inRange.length - 1)) * IW : IW / 2);
         };
-        let vals = [];
-        for (const pts of Object.values(seriesByTeam)) for (const p of pts) vals.push(p.v);
-        let vMin = vals.length ? Math.min(0, Math.min(...vals)) : 0;
-        let vMax = vals.length ? Math.max(...vals) : 1;
-        if (vMax === vMin) vMax = vMin + 1;
-        if (isRate && !useCum) { vMin = Math.min(...vals); vMax = Math.max(...vals); if (vMax === vMin) vMax = vMin + 0.01; }
-        const yForV = v => PAD.top + IH - ((v - vMin) / (vMax - vMin)) * IH;
 
-        // Grid + axis
-        const yTicks = 5;
-        let gridLines = "";
-        for (let i = 0; i <= yTicks; i++) {
-          const v = vMin + (i / yTicks) * (vMax - vMin);
-          const y = yForV(v);
-          const vLab = meta.fmt ? meta.fmt(v) : (Math.abs(v) >= 10 ? Math.round(v) : v.toFixed(1));
-          gridLines += `<line x1="${PAD.left}" x2="${PAD.left+IW}" y1="${y}" y2="${y}" stroke="var(--border-soft)" stroke-width="1"/>`;
-          gridLines += `<text x="${PAD.left - 8}" y="${y + 4}" fill="var(--text-mute)" font-size="10" text-anchor="end" font-family="var(--mono)">${vLab}</text>`;
+        // If multiple stats picked and they have different scales, normalize each stat 0..1
+        const multiStat = stats.length > 1;
+        // Compute per-stat ranges
+        const statRange = {};
+        for (const stat of stats) {
+          let mn = Infinity, mx = -Infinity;
+          for (const s of series) if (s.stat === stat) for (const p of s.pts) if (p.v != null) { if (p.v < mn) mn = p.v; if (p.v > mx) mx = p.v; }
+          if (mn === Infinity) { mn = 0; mx = 1; }
+          if (mx === mn) mx = mn + (Math.abs(mn) < 1e-6 ? 1 : Math.abs(mn) * 0.1 || 1);
+          if (!multiStat && CHART_STAT_META[stat].counting && chartState.cumulative) mn = Math.min(mn, 0);
+          statRange[stat] = { mn, mx };
         }
-        // X ticks: ~6 evenly spaced
-        const xTicks = Math.min(6, allDatesInRange.length);
+        // For multi-stat: use 0..1 normalized plot with per-stat range in tooltips
+        const yForPoint = (stat, v) => {
+          if (multiStat) {
+            const { mn, mx } = statRange[stat];
+            const t = (v - mn) / (mx - mn);
+            return PAD.top + IH - t * IH;
+          }
+          const { mn, mx } = statRange[stat];
+          const t = (v - mn) / (mx - mn);
+          return PAD.top + IH - t * IH;
+        };
+
+        // Grid + Y axis labels
+        let gridLines = "";
+        const yTicks = 5;
+        for (let i = 0; i <= yTicks; i++) {
+          const y = PAD.top + IH - (i / yTicks) * IH;
+          gridLines += `<line x1="${PAD.left}" x2="${PAD.left+IW}" y1="${y}" y2="${y}" stroke="var(--border-soft)" stroke-width="1"/>`;
+          if (multiStat) {
+            const t = i / yTicks;
+            gridLines += `<text x="${PAD.left - 8}" y="${y + 4}" fill="var(--text-mute)" font-size="10" text-anchor="end" font-family="var(--mono)">${(t*100).toFixed(0)}%</text>`;
+          } else {
+            const stat = stats[0];
+            const { mn, mx } = statRange[stat];
+            const v = mn + (i / yTicks) * (mx - mn);
+            const meta = CHART_STAT_META[stat];
+            const lab = meta.fmt ? meta.fmt(v) : (Math.abs(v) >= 10 ? Math.round(v) : v.toFixed(1));
+            gridLines += `<text x="${PAD.left - 8}" y="${y + 4}" fill="var(--text-mute)" font-size="10" text-anchor="end" font-family="var(--mono)">${lab}</text>`;
+          }
+        }
+
+        // X labels
+        const xTicks = Math.min(6, inRange.length);
         let xLabels = "";
         for (let i = 0; i < xTicks; i++) {
-          const idx = Math.round((i / (xTicks - 1)) * (allDatesInRange.length - 1));
-          const d = allDatesInRange[idx];
-          if (!d) continue;
+          const idx = xTicks === 1 ? 0 : Math.round((i / (xTicks - 1)) * (inRange.length - 1));
+          const d = inRange[idx]; if (!d) continue;
           const x = xForDate(d);
-          const mm = d.slice(5,7), dd = d.slice(8,10);
-          xLabels += `<text x="${x}" y="${H - PAD.bottom + 18}" fill="var(--text-mute)" font-size="10" text-anchor="middle" font-family="var(--mono)">${mm}/${dd}</text>`;
+          xLabels += `<text x="${x}" y="${H - PAD.bottom + 18}" fill="var(--text-mute)" font-size="10" text-anchor="middle" font-family="var(--mono)">${d.slice(5,7)}/${d.slice(8,10)}</text>`;
         }
 
-        // Lines
+        // Series paths (smoothed)
         let paths = "";
-        for (const [tk, pts] of Object.entries(seriesByTeam)) {
-          if (!pts.length) continue;
-          const color = teamsMeta[tk].color;
-          const d = pts.map((p, i) => `${i===0?"M":"L"}${xForDate(p.d).toFixed(1)},${yForV(p.v).toFixed(1)}`).join(" ");
-          paths += `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" opacity="0.85"/>`;
+        for (const s of series) {
+          const drawn = s.pts.filter(p => p.v != null).map(p => ({ x: xForDate(p.d), y: yForPoint(s.stat, p.v) }));
+          if (!drawn.length) continue;
+          const d = smoothPath(drawn);
+          paths += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" opacity="0.9" ${s.dash?`stroke-dasharray="${s.dash}"`:""}/>`;
         }
 
-        const svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
-          ${gridLines}${paths}
-          <line x1="${PAD.left}" x2="${PAD.left}" y1="${PAD.top}" y2="${PAD.top+IH}" stroke="var(--border)" stroke-width="1"/>
-          <line x1="${PAD.left}" x2="${PAD.left+IW}" y1="${PAD.top+IH}" y2="${PAD.top+IH}" stroke="var(--border)" stroke-width="1"/>
-          ${xLabels}
-        </svg>`;
-        document.getElementById("chart-svg-wrap").innerHTML = svg;
-      };
-      drawChart();
+        // Legend for multi-stat: show dash-pattern → label
+        let statLegend = "";
+        if (multiStat) {
+          statLegend = `<g transform="translate(${PAD.left + 6},${PAD.top + 8})">`;
+          stats.forEach((st, i) => {
+            const dash = STAT_DASH[i % STAT_DASH.length];
+            statLegend += `<line x1="${i*80}" x2="${i*80+18}" y1="0" y2="0" stroke="var(--text-dim)" stroke-width="2" ${dash?`stroke-dasharray="${dash}"`:""}/>`;
+            statLegend += `<text x="${i*80+22}" y="4" fill="var(--text-dim)" font-size="10" font-family="var(--mono)">${CHART_STAT_META[st].lab}</text>`;
+          });
+          statLegend += `</g>`;
+        }
 
-      document.getElementById("chart-stat").addEventListener("change", e => { chartState.stat = e.target.value; drawChart(); });
-      document.getElementById("chart-from").addEventListener("change", e => { chartState.dateFrom = e.target.value; drawChart(); });
-      document.getElementById("chart-to").addEventListener("change", e => { chartState.dateTo = e.target.value; drawChart(); });
-      document.getElementById("chart-cum").addEventListener("change", e => { chartState.cumulative = e.target.checked; drawChart(); });
-      document.querySelectorAll(".team-cb input").forEach(cb => {
-        cb.addEventListener("change", e => {
-          const tk = e.target.getAttribute("data-team");
-          if (e.target.checked) chartState.selectedTeams.add(tk); else chartState.selectedTeams.delete(tk);
-          drawChart();
+        // Brush overlay (drag rect)
+        const brushLayer = `
+          <rect id="chart-brush-hit" x="${PAD.left}" y="${PAD.top}" width="${IW}" height="${IH}" fill="transparent" style="cursor:crosshair"/>
+          <rect id="chart-brush" x="0" y="0" width="0" height="0" fill="var(--accent)" opacity="0.15" pointer-events="none"/>
+          <line id="chart-guide" x1="0" y1="${PAD.top}" x2="0" y2="${PAD.top+IH}" stroke="var(--text-mute)" stroke-dasharray="2,3" opacity="0" pointer-events="none"/>
+        `;
+
+        svgEl.innerHTML = `
+          ${gridLines}${paths}
+          <line x1="${PAD.left}" x2="${PAD.left}" y1="${PAD.top}" y2="${PAD.top+IH}" stroke="var(--border)"/>
+          <line x1="${PAD.left}" x2="${PAD.left+IW}" y1="${PAD.top+IH}" y2="${PAD.top+IH}" stroke="var(--border)"/>
+          ${xLabels}
+          ${statLegend}
+          ${brushLayer}
+        `;
+
+        plotState = { PAD, IW, IH, W, H, inRange, xForDate, yForPoint, series, statRange, stats, multiStat };
+      };
+
+      const teamName = tk => teamsMeta[tk]?.name || tk;
+      const fmtValue = (stat, v) => {
+        if (v == null) return "—";
+        const meta = CHART_STAT_META[stat];
+        if (meta.fmt) return meta.fmt(v);
+        return Math.abs(v) >= 10 ? Math.round(v) : Number(v).toFixed(1);
+      };
+
+      // Hover tooltip
+      svgEl.addEventListener("mousemove", (e) => {
+        if (!plotState.inRange) return;
+        const { PAD, IW, inRange, xForDate, series } = plotState;
+        const rect = svgEl.getBoundingClientRect();
+        const svgW = rect.width;
+        const localX = (e.clientX - rect.left) * (900 / svgW);
+        if (localX < PAD.left || localX > PAD.left + IW) { document.getElementById("chart-guide").setAttribute("opacity","0"); ttEl.style.display="none"; return; }
+        // Nearest date
+        const t = (localX - PAD.left) / IW;
+        const idx = Math.round(t * (inRange.length - 1));
+        const d = inRange[idx];
+        const gx = xForDate(d);
+        const guide = document.getElementById("chart-guide");
+        guide.setAttribute("x1", gx); guide.setAttribute("x2", gx); guide.setAttribute("opacity","0.6");
+        // Tooltip
+        const rowsBy = {};
+        for (const s of series) {
+          const p = s.pts.find(x => x.d === d);
+          if (!p || p.v == null) continue;
+          rowsBy[s.tk] ??= { name: teamName(s.tk), color: s.color, stats: [] };
+          rowsBy[s.tk].stats.push({ stat: s.stat, v: p.v });
+        }
+        const dateLab = `${d.slice(5,7)}/${d.slice(8,10)}/${d.slice(2,4)}`;
+        let html = `<div class="tt-date">${dateLab}</div>`;
+        const sorted = Object.entries(rowsBy).sort((a,b) => {
+          const av = a[1].stats[0]?.v ?? 0, bv = b[1].stats[0]?.v ?? 0;
+          return bv - av;
         });
+        for (const [tk, meta] of sorted) {
+          const stats = meta.stats.map(s => `<span class="tt-stat"><span class="tt-lab">${CHART_STAT_META[s.stat].lab}</span> ${fmtValue(s.stat, s.v)}</span>`).join("");
+          html += `<div class="tt-row"><span class="tt-dot" style="background:${meta.color}"></span><span class="tt-name">${esc(meta.name)}</span>${stats}</div>`;
+        }
+        ttEl.innerHTML = html;
+        ttEl.style.display = "block";
+        // position tooltip
+        const wrapRect = svgEl.parentElement.getBoundingClientRect();
+        const scaleX = wrapRect.width / 900;
+        const tipX = gx * scaleX;
+        const flip = tipX > wrapRect.width - 220;
+        ttEl.style.left = (flip ? tipX - 8 : tipX + 12) + "px";
+        ttEl.style.transform = flip ? "translateX(-100%)" : "";
+        ttEl.style.top = "16px";
       });
-      document.getElementById("teams-all").addEventListener("click", () => {
-        for (const tk of Object.keys(teamsMeta)) chartState.selectedTeams.add(tk);
-        renderChart();
+      svgEl.addEventListener("mouseleave", () => {
+        const g = document.getElementById("chart-guide"); if (g) g.setAttribute("opacity","0");
+        ttEl.style.display = "none";
       });
-      document.getElementById("teams-none").addEventListener("click", () => {
-        chartState.selectedTeams.clear();
-        renderChart();
+
+      // Brush drag → zoom
+      let brushStart = null;
+      svgEl.addEventListener("mousedown", (e) => {
+        if (!plotState.inRange) return;
+        const { PAD, IW } = plotState;
+        const rect = svgEl.getBoundingClientRect();
+        const localX = (e.clientX - rect.left) * (900 / rect.width);
+        if (localX < PAD.left || localX > PAD.left + IW) return;
+        brushStart = { x: localX };
+        e.preventDefault();
       });
+      window.addEventListener("mousemove", (e) => {
+        if (!brushStart) return;
+        const { PAD, IW } = plotState;
+        const rect = svgEl.getBoundingClientRect();
+        const localX = Math.max(PAD.left, Math.min(PAD.left + IW, (e.clientX - rect.left) * (900 / rect.width)));
+        const x1 = Math.min(brushStart.x, localX);
+        const w  = Math.abs(brushStart.x - localX);
+        const brush = document.getElementById("chart-brush");
+        if (!brush) return;
+        brush.setAttribute("x", x1); brush.setAttribute("y", plotState.PAD.top);
+        brush.setAttribute("width", w); brush.setAttribute("height", plotState.IH);
+      });
+      window.addEventListener("mouseup", (e) => {
+        if (!brushStart) return;
+        const { PAD, IW, inRange } = plotState;
+        const rect = svgEl.getBoundingClientRect();
+        const localX = Math.max(PAD.left, Math.min(PAD.left + IW, (e.clientX - rect.left) * (900 / rect.width)));
+        const x1 = Math.min(brushStart.x, localX);
+        const x2 = Math.max(brushStart.x, localX);
+        brushStart = null;
+        const brush = document.getElementById("chart-brush");
+        if (brush) { brush.setAttribute("width", 0); brush.setAttribute("height", 0); }
+        if (x2 - x1 < 8) return;   // click, not drag
+        const t1 = (x1 - PAD.left) / IW, t2 = (x2 - PAD.left) / IW;
+        const i1 = Math.round(t1 * (inRange.length - 1));
+        const i2 = Math.round(t2 * (inRange.length - 1));
+        chartState.zoomFrom = inRange[i1];
+        chartState.zoomTo = inRange[i2];
+        document.getElementById("chart-from").value = chartState.zoomFrom;
+        document.getElementById("chart-to").value = chartState.zoomTo;
+        drawChart();
+      });
+
+      // Wire controls
+      document.querySelectorAll(".stat-cb input").forEach(cb => cb.addEventListener("change", e => {
+        const st = e.target.getAttribute("data-stat");
+        if (e.target.checked) chartState.selectedStats.add(st); else chartState.selectedStats.delete(st);
+        drawChart();
+      }));
+      document.querySelectorAll(".team-cb input").forEach(cb => cb.addEventListener("change", e => {
+        const tk = e.target.getAttribute("data-team");
+        if (e.target.checked) chartState.selectedTeams.add(tk); else chartState.selectedTeams.delete(tk);
+        drawChart();
+      }));
+      document.getElementById("chart-from").addEventListener("change", e => { chartState.zoomFrom = e.target.value; drawChart(); });
+      document.getElementById("chart-to").addEventListener("change", e => { chartState.zoomTo = e.target.value; drawChart(); });
+      document.getElementById("chart-cum").addEventListener("change", e => { chartState.cumulative = e.target.checked; drawChart(); });
+      document.getElementById("chart-reset").addEventListener("click", () => {
+        chartState.zoomFrom = chartState.dateFrom; chartState.zoomTo = chartState.dateTo;
+        document.getElementById("chart-from").value = chartState.zoomFrom;
+        document.getElementById("chart-to").value = chartState.zoomTo;
+        drawChart();
+      });
+      document.getElementById("teams-all").addEventListener("click", () => { for (const tk of Object.keys(teamsMeta)) chartState.selectedTeams.add(tk); renderChart(); });
+      document.getElementById("teams-none").addEventListener("click", () => { chartState.selectedTeams.clear(); renderChart(); });
+
+      drawChart();
     }).catch(err => {
       contentEl.innerHTML = `<p style='color:var(--worst);padding:24px'>Failed to load daily data: ${esc(err.message)}</p>`;
     });
