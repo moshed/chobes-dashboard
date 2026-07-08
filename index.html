@@ -323,8 +323,10 @@ function initApp(DATA) {
   }
   window.addEventListener("hashchange", route);
 
-  // Persistent state for month tab
-  let monthViewMode = localStorage.getItem("chobes_view_mode") || "both";  // "stats" | "points" | "both"
+  // Persistent state for month tab (guard localStorage — sandboxed iframes throw)
+  function safeStorageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+  function safeStorageSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+  let monthViewMode = safeStorageGet("chobes_view_mode") || "both";  // "stats" | "points" | "both"
   let monthSort = { key: "total_pts", dir: "desc" };  // sort by total roto pts desc by default
 
   function renderMonth(m) {
@@ -372,7 +374,7 @@ function initApp(DATA) {
     toolbar.querySelectorAll(".view-toggle button").forEach(btn => {
       btn.addEventListener("click", () => {
         monthViewMode = btn.getAttribute("data-mode");
-        localStorage.setItem("chobes_view_mode", monthViewMode);
+        safeStorageSet("chobes_view_mode", monthViewMode);
         renderTable();
       });
     });
