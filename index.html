@@ -52,7 +52,12 @@
   table.teams-table td.pts-cell { color:var(--text-dim); font-family:var(--mono); font-size:12px; }
   table.teams-table td.pts-cell.pts-high { color:var(--best); font-weight:700; }
   table.teams-table td.pts-cell.pts-low { color:var(--worst); font-weight:700; }
-  table.teams-table th.stat-col + th.pts-col, table.teams-table td.stat-cell + td.pts-cell { border-left:1px dashed var(--border-soft); }
+  table.teams-table td.both-cell { font-family:var(--mono); }
+  table.teams-table td.both-cell .stat-val { color:var(--text); }
+  table.teams-table td.both-cell .both-sep { color:var(--text-mute); margin:0 5px; }
+  table.teams-table td.both-cell .pts-val { color:var(--text-dim); font-size:11px; }
+  table.teams-table td.both-cell .pts-val.pts-high { color:var(--best); font-weight:700; }
+  table.teams-table td.both-cell .pts-val.pts-low { color:var(--worst); font-weight:700; }
   @media (max-width:720px) {
     table.teams-table th, table.teams-table td { padding:6px 8px; font-size:11.5px; }
   }
@@ -378,11 +383,10 @@ function initApp(DATA) {
       const cols = [
         { key: "rank",       lab: "#",     sort: null },
         { key: "team_name",  lab: "Team",  sort: "team_name" },
-        ...CATS.flatMap(([k, lab]) => {
-          const arr = [];
-          if (showStats)  arr.push({ key: k,              lab, sort: k,              cat: k, type: "stat" });
-          if (showPoints) arr.push({ key: k + "_pts",     lab: showStats ? `${lab} pts` : lab, sort: k + "_pts", cat: k, type: "pts" });
-          return arr;
+        ...CATS.map(([k, lab]) => {
+          if (monthViewMode === "both") return { key: k, lab, sort: k, cat: k, type: "both" };
+          if (monthViewMode === "stats") return { key: k, lab, sort: k, cat: k, type: "stat" };
+          return { key: k + "_pts", lab, sort: k + "_pts", cat: k, type: "pts" };
         }),
         { key: "total_pts", lab: "Total", sort: "total_pts", strong: true },
       ];
@@ -406,6 +410,11 @@ function initApp(DATA) {
             const p = t.pts[c.cat + "_pts"] || 0;
             const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
             return `<td class="pts-cell ${cls}">${p}</td>`;
+          }
+          if (c.type === "both") {
+            const p = t.pts[c.cat + "_pts"] || 0;
+            const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
+            return `<td class="both-cell"><span class="stat-val">${catVal(c.cat, t.totals)}</span><span class="both-sep">/</span><span class="pts-val ${cls}">${p}</span></td>`;
           }
           // stat
           return `<td class="stat-cell">${catVal(c.cat, t.totals)}</td>`;
