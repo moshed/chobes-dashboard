@@ -143,11 +143,17 @@
   .chart-reset-btn:hover { background:var(--panel-3); color:var(--text); }
   .chart-tooltip { position:absolute; background:var(--panel-3); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font:500 11.5px/1.4 var(--sans); color:var(--text); pointer-events:none; display:none; z-index:5; min-width:180px; max-width:280px; box-shadow:0 4px 20px rgba(0,0,0,0.4); }
   .chart-tooltip .tt-date { font:600 10.5px/1 var(--mono); color:var(--text-mute); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px; }
-  .chart-tooltip .tt-row { display:flex; align-items:center; gap:6px; padding:2px 0; flex-wrap:wrap; }
+  .chart-tooltip .tt-rows { display:flex; flex-direction:column; gap:2px; }
+  .chart-tooltip .tt-row { display:grid; grid-template-columns:10px minmax(90px, 1fr) auto; align-items:center; gap:6px; padding:2px 0; white-space:nowrap; }
   .chart-tooltip .tt-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-  .chart-tooltip .tt-name { color:var(--text-dim); font-size:11px; flex:1; }
-  .chart-tooltip .tt-stat { color:var(--text); font-family:var(--mono); font-size:11.5px; font-weight:600; margin-left:6px; }
+  .chart-tooltip .tt-name { color:var(--text-dim); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; }
+  .chart-tooltip .tt-stats { display:flex; gap:8px; justify-content:flex-end; }
+  .chart-tooltip .tt-stat { color:var(--text); font-family:var(--mono); font-size:11.5px; font-weight:600; }
   .chart-tooltip .tt-stat .tt-lab { color:var(--text-mute); font-weight:500; margin-right:3px; font-size:10px; }
+  .ctrl-lab-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:2px; }
+  .mini-actions { display:flex; gap:4px; }
+  .mini-actions button { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:5px; padding:2px 8px; font:600 10px/1 var(--mono); color:var(--text-dim); cursor:pointer; }
+  .mini-actions button:hover { background:var(--panel-3); color:var(--text); }
   .chart-range-bar { display:flex; align-items:center; justify-content:space-between; margin:2px 4px 6px; }
   .chart-range-label { font:700 15px/1.2 var(--sans); color:var(--text); font-variant-numeric:tabular-nums; }
   .chart-range-dates { font-family:var(--mono); }
@@ -895,7 +901,13 @@ function initApp(DATA) {
       contentEl.innerHTML = `
         <div class="chart-controls">
           <div class="ctrl chart-stats">
-            <label class="ctrl-lab">Stats <span class="ctrl-hint">(multi-select overlays)</span></label>
+            <div class="ctrl-lab-row">
+              <label class="ctrl-lab">Stats <span class="ctrl-hint">(multi-select · shift-click = isolate)</span></label>
+              <div class="mini-actions">
+                <button id="stats-all">All</button>
+                <button id="stats-none">Clear</button>
+              </div>
+            </div>
             <div class="chart-stats-grid">${statChecks}</div>
           </div>
           <div class="ctrl">
@@ -1185,14 +1197,20 @@ function initApp(DATA) {
         }
         const dateLab = `${d.slice(5,7)}/${d.slice(8,10)}/${d.slice(2,4)}`;
         let html = `<div class="tt-date">${dateLab}</div>`;
+        // Sort by primary stat (first selected) descending
+        const primaryStat = plotState.stats[0];
         const sorted = Object.entries(rowsBy).sort((a,b) => {
-          const av = a[1].stats[0]?.v ?? 0, bv = b[1].stats[0]?.v ?? 0;
+          const av = a[1].stats.find(s=>s.stat===primaryStat)?.v ?? -Infinity;
+          const bv = b[1].stats.find(s=>s.stat===primaryStat)?.v ?? -Infinity;
           return bv - av;
         });
+        // One row per team, all their stat values on that line
+        html += `<div class="tt-rows">`;
         for (const [tk, meta] of sorted) {
           const stats = meta.stats.map(s => `<span class="tt-stat"><span class="tt-lab">${CHART_STAT_META[s.stat].lab}</span> ${fmtValue(s.stat, s.v)}</span>`).join("");
-          html += `<div class="tt-row"><span class="tt-dot" style="background:${meta.color}"></span><span class="tt-name">${esc(meta.name)}</span>${stats}</div>`;
+          html += `<div class="tt-row"><span class="tt-dot" style="background:${meta.color}"></span><span class="tt-name">${esc(meta.name)}</span><span class="tt-stats">${stats}</span></div>`;
         }
+        html += `</div>`;
         ttEl.innerHTML = html;
         ttEl.style.display = "block";
         // position tooltip
@@ -1253,17 +1271,50 @@ function initApp(DATA) {
         drawChart();
       });
 
-      // Wire controls
-      document.querySelectorAll(".stat-cb input").forEach(cb => cb.addEventListener("change", e => {
-        const st = e.target.getAttribute("data-stat");
-        if (e.target.checked) chartState.selectedStats.add(st); else chartState.selectedStats.delete(st);
-        drawChart();
+      // Wire controls — shift-click on a checkbox ISOLATES that one item (selects only it)
+      document.querySelectorAll(".stat-cb").forEach(cb => cb.addEventListener("click", e => {
+        const input = cb.querySelector("input");
+        const st = input.getAttribute("data-stat");
+        if (e.shiftKey) {
+          e.preventDefault();
+          chartState.selectedStats.clear();
+          chartState.selectedStats.add(st);
+          document.querySelectorAll(".stat-cb input").forEach(i => { i.checked = i.getAttribute("data-stat") === st; });
+          drawChart();
+          return;
+        }
+        // Native checkbox toggle happens automatically; sync state after
+        setTimeout(() => {
+          if (input.checked) chartState.selectedStats.add(st); else chartState.selectedStats.delete(st);
+          drawChart();
+        }, 0);
       }));
-      document.querySelectorAll(".team-cb input").forEach(cb => cb.addEventListener("change", e => {
-        const tk = e.target.getAttribute("data-team");
-        if (e.target.checked) chartState.selectedTeams.add(tk); else chartState.selectedTeams.delete(tk);
-        drawChart();
+      document.querySelectorAll(".team-cb").forEach(cb => cb.addEventListener("click", e => {
+        const input = cb.querySelector("input");
+        const tk = input.getAttribute("data-team");
+        if (e.shiftKey) {
+          e.preventDefault();
+          chartState.selectedTeams.clear();
+          chartState.selectedTeams.add(tk);
+          document.querySelectorAll(".team-cb input").forEach(i => { i.checked = i.getAttribute("data-team") === tk; });
+          drawChart();
+          return;
+        }
+        setTimeout(() => {
+          if (input.checked) chartState.selectedTeams.add(tk); else chartState.selectedTeams.delete(tk);
+          drawChart();
+        }, 0);
       }));
+      document.getElementById("stats-all").addEventListener("click", () => {
+        for (const k of Object.keys(CHART_STAT_META)) chartState.selectedStats.add(k);
+        document.querySelectorAll(".stat-cb input").forEach(i => i.checked = true);
+        drawChart();
+      });
+      document.getElementById("stats-none").addEventListener("click", () => {
+        chartState.selectedStats.clear();
+        document.querySelectorAll(".stat-cb input").forEach(i => i.checked = false);
+        drawChart();
+      });
       document.getElementById("chart-from").addEventListener("change", e => { chartState.zoomFrom = e.target.value; drawChart(); });
       document.getElementById("chart-to").addEventListener("change", e => { chartState.zoomTo = e.target.value; drawChart(); });
       document.getElementById("chart-cum").addEventListener("change", e => { chartState.cumulative = e.target.checked; drawChart(); });
@@ -1273,8 +1324,16 @@ function initApp(DATA) {
         document.getElementById("chart-to").value = chartState.zoomTo;
         drawChart();
       });
-      document.getElementById("teams-all").addEventListener("click", () => { for (const tk of Object.keys(teamsMeta)) chartState.selectedTeams.add(tk); renderChart(); });
-      document.getElementById("teams-none").addEventListener("click", () => { chartState.selectedTeams.clear(); renderChart(); });
+      document.getElementById("teams-all").addEventListener("click", () => {
+        for (const tk of Object.keys(teamsMeta)) chartState.selectedTeams.add(tk);
+        document.querySelectorAll(".team-cb input").forEach(i => i.checked = true);
+        drawChart();
+      });
+      document.getElementById("teams-none").addEventListener("click", () => {
+        chartState.selectedTeams.clear();
+        document.querySelectorAll(".team-cb input").forEach(i => i.checked = false);
+        drawChart();
+      });
 
       drawChart();
     }).catch(err => {
