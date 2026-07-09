@@ -61,13 +61,21 @@
   table.teams-table td.both-cell .pts-val.pts-low { color:var(--worst); font-weight:700; }
   table.teams-table td.stat-cell.unscored, table.teams-table th[data-sort="k9"] { opacity:0.75; }
   table.teams-table td.stat-cell.unscored::after, table.teams-table th[data-sort="k9"]::after { content:" ✕"; color:var(--text-mute); font-size:9px; margin-left:1px; }
-  table.teams-table td.sim-cell { padding:4px 6px; }
-  table.teams-table td.sim-cell input.sim-ip-input { width:60px; background:var(--panel-2); border:1px solid var(--border-soft); color:var(--text); font:600 11px/1 var(--mono); padding:4px 6px; border-radius:5px; text-align:left; -moz-appearance:textfield; }
-  table.teams-table td.sim-cell input.sim-ip-input::-webkit-outer-spin-button, table.teams-table td.sim-cell input.sim-ip-input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
-  table.teams-table td.sim-cell input.sim-ip-input:focus { outline:1px solid var(--accent); }
-  .sim-banner { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:rgba(255,180,74,0.08); border-bottom:1px solid rgba(255,180,74,0.3); font:500 12px/1.4 var(--sans); color:var(--warn); }
-  .sim-banner button { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:5px; padding:3px 10px; font:600 11px/1 var(--mono); color:var(--text-dim); cursor:pointer; }
-  .sim-banner button:hover { background:var(--panel-3); color:var(--text); }
+  .sim-banner { padding:8px 12px; background:rgba(255,180,74,0.08); border-bottom:1px solid rgba(255,180,74,0.3); font:500 12px/1.4 var(--sans); color:var(--warn); }
+  .sim-banner b { color:var(--text); font-weight:700; }
+  .total-projection { display:flex; align-items:center; gap:14px; flex-wrap:wrap; font:500 12px/1 var(--sans); color:var(--text-dim); }
+  .total-projection label { display:inline-flex; align-items:center; gap:6px; }
+  .total-projection input[type="number"] { width:90px; background:var(--panel-2); border:1px solid var(--border-soft); color:var(--text); font:600 12px/1 var(--mono); padding:6px 8px; border-radius:5px; text-align:left; -moz-appearance:textfield; }
+  .total-projection input[type="number"]::-webkit-outer-spin-button, .total-projection input[type="number"]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .total-projection input[type="number"]:focus { outline:1px solid var(--accent); }
+  .total-projection input[type="checkbox"] { accent-color:var(--accent); }
+  .total-projection button { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:5px; padding:5px 10px; font:600 11px/1 var(--mono); color:var(--text-dim); cursor:pointer; }
+  .total-projection button:hover:not(:disabled) { background:var(--panel-3); color:var(--text); }
+  .total-projection button:disabled { opacity:0.4; cursor:default; }
+  .ip-scaled-down { color:var(--warn); font-weight:700; margin-left:2px; }
+  .ip-scaled-up { color:var(--best); font-weight:700; margin-left:2px; }
+  .ip-untouched { color:var(--text-mute); margin-left:2px; }
+  .loading { padding:20px; color:var(--text-mute); text-align:center; font-family:var(--sans); }
   @media (max-width:900px) {
     table.teams-table th, table.teams-table td { padding:6px 7px; font-size:11.5px; }
     table.teams-table td.team-name-cell { max-width:120px; overflow:hidden; text-overflow:ellipsis; }
@@ -361,6 +369,14 @@ function initApp(DATA) {
     nav.appendChild(b);
     monthButtons[m] = b;
   });
+  // Total tab (season standings + IP projection)
+  const totalTab = document.createElement("button");
+  totalTab.className = "tab";
+  totalTab.setAttribute("data-slug", "total");
+  totalTab.innerHTML = `🏆 Total`;
+  totalTab.addEventListener("click", () => { location.hash = "#total"; });
+  nav.appendChild(totalTab);
+
   // Chart tab
   const chartTab = document.createElement("button");
   chartTab.className = "tab chart";
@@ -387,6 +403,9 @@ function initApp(DATA) {
     } else if (slug === "chart") {
       chartTab.classList.add("active");
       renderChart();
+    } else if (slug === "total") {
+      totalTab.classList.add("active");
+      renderTotal();
     } else if (slug in monthBySlug) {
       const m = monthBySlug[slug];
       monthButtons[m].classList.add("active");
@@ -414,67 +433,18 @@ function initApp(DATA) {
     const teams = DATA.months[m].teams.slice();
     const N = teams.length;
 
-    // Per-team IP override (simulator). Map team_key → custom_IP (float). Empty = actual.
-    const simOverride = {};   // team_key → new IP in innings
-    function effectiveTotals(t) {
-      const custom = simOverride[t.team_key];
-      if (custom == null || isNaN(custom) || custom <= 0) return t.totals;
-      const actualIP = (t.totals.ip_outs ?? 0) / 3;
-      if (actualIP <= 0) return t.totals;
-      const scale = custom / actualIP;
-      // Counting stats scale linearly with IP; ERA / WHIP / K/9 unchanged; hitting untouched.
-      return { ...t.totals,
-        k:  t.totals.k  * scale,
-        w:  t.totals.w  * scale,
-        sv: t.totals.sv * scale,
-        ip_outs: custom * 3,
-      };
-    }
-    function catValFor(cat, t) { return catVal(cat, effectiveTotals(t)); }
+    // Monthly tabs: no simulator. Just read t.totals / t.pts directly.
+    const effectiveTotals = t => t.totals;
+    const effectivePts    = t => t.pts;
+    function catValFor(cat, t) { return catVal(cat, t.totals); }
     function sortValue(t, key) {
       if (key === "team_name") return t.team_name;
-      if (key === "total_pts") return effectivePts(t).total_pts;
-      if (key.endsWith("_pts")) return effectivePts(t)[key] || 0;
+      if (key === "total_pts") return t.pts.total_pts;
+      if (key.endsWith("_pts")) return t.pts[key] || 0;
       if (key === "k9") {
-        const tot = effectiveTotals(t);
-        return tot.ip_outs > 0 ? (tot.k * 9) / (tot.ip_outs / 3) : 0;
+        return t.totals.ip_outs > 0 ? (t.totals.k * 9) / (t.totals.ip_outs / 3) : 0;
       }
-      return effectiveTotals(t)[key] ?? 0;
-    }
-    // Recompute roto ranks + total_pts when any team's IP is overridden.
-    // For counting cats: rank by value. For rate cats: rank by value (low is good for ERA/WHIP).
-    let cachedPts = null;
-    function effectivePts(t) {
-      if (Object.keys(simOverride).length === 0) return t.pts;
-      if (!cachedPts) cachedPts = recomputePts();
-      return cachedPts[t.team_key] || t.pts;
-    }
-    function recomputePts() {
-      const CATS_HIGH = ["r","hr","rbi","sb","obp","w","sv","k"];
-      const CATS_LOW  = ["era","whip"];
-      const result = {};
-      const rankCat = (cat, ascending) => {
-        const arr = teams.map(t => ({ tk: t.team_key, v: effectiveTotals(t)[cat] ?? 0 })).sort((a,b) => ascending ? a.v - b.v : b.v - a.v);
-        let i = 0;
-        while (i < arr.length) {
-          let j = i;
-          while (j+1 < arr.length && arr[j+1].v === arr[i].v) j++;
-          const avgRank = (i + 1 + j + 1) / 2;
-          for (let k = i; k <= j; k++) {
-            result[arr[k].tk] ??= {};
-            result[arr[k].tk][cat + "_pts"] = avgRank;
-          }
-          i = j + 1;
-        }
-      };
-      for (const cat of CATS_HIGH) rankCat(cat, true);
-      for (const cat of CATS_LOW)  rankCat(cat, false);
-      for (const t of teams) {
-        result[t.team_key] ??= {};
-        result[t.team_key].total_pts = [...CATS_HIGH, ...CATS_LOW]
-          .reduce((s,c) => s + (result[t.team_key][c + "_pts"] || 0), 0);
-      }
-      return result;
+      return t.totals[key] ?? 0;
     }
     function sortTeams() {
       const mult = monthSort.dir === "asc" ? 1 : -1;
@@ -533,7 +503,6 @@ function initApp(DATA) {
           return { key: k + "_pts", lab, sort: k + "_pts", cat: k, type: "pts" };
         }),
         { key: "total_pts", lab: "Total", sort: "total_pts", strong: true },
-        { key: "sim_ip",    lab: "Sim IP", sort: null, type: "sim" },
       ];
 
       const arrow = (c) => {
@@ -551,11 +520,6 @@ function initApp(DATA) {
           if (c.key === "rank") return `<td class="rank ${rankCls}">${r}</td>`;
           if (c.key === "team_name") return `<td class="team-name-cell">${esc(t.team_name)}</td>`;
           if (c.key === "total_pts") return `<td class="strong">${effectivePts(t).total_pts}</td>`;
-          if (c.type === "sim") {
-            const actualIP = (t.totals.ip_outs ?? 0) / 3;
-            const current = simOverride[t.team_key];
-            return `<td class="sim-cell"><input type="number" step="0.1" min="0" placeholder="${actualIP.toFixed(1)}" data-team="${t.team_key}" value="${current != null ? current : ""}" class="sim-ip-input"></td>`;
-          }
           if (c.unscored) {
             return `<td class="stat-cell unscored" title="Not scored">${catValFor(c.cat, t)}</td>`;
           }
@@ -575,13 +539,7 @@ function initApp(DATA) {
         return `<tr>${cells}</tr>`;
       }).join("");
 
-      // Sim reset banner
-      const simActive = Object.values(simOverride).filter(v => v != null).length;
-      const simBanner = simActive > 0 ? `<div class="sim-banner">
-        <span>⚗️ Simulator active on ${simActive} team${simActive===1?"":"s"} — pitching K/W/SV scaled by custom IP. Points recomputed.</span>
-        <button class="sim-reset">Reset all</button>
-      </div>` : "";
-      wrapper.innerHTML = simBanner + `<table class="teams-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+      wrapper.innerHTML = `<table class="teams-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
       wrapper.querySelectorAll("th.sortable").forEach(th => {
         th.addEventListener("click", () => {
           const k = th.getAttribute("data-sort");
@@ -593,26 +551,6 @@ function initApp(DATA) {
           }
           renderTable();
         });
-      });
-      // Wire Sim IP inputs
-      wrapper.querySelectorAll(".sim-ip-input").forEach(inp => {
-        inp.addEventListener("input", (e) => {
-          const tk = e.target.getAttribute("data-team");
-          const val = parseFloat(e.target.value);
-          if (isNaN(val) || val <= 0) delete simOverride[tk];
-          else simOverride[tk] = val;
-          cachedPts = null;
-          renderTable();
-          // Re-focus the input the user was typing in
-          const again = wrapper.querySelector(`.sim-ip-input[data-team="${tk}"]`);
-          if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
-        });
-      });
-      const resetBtn = wrapper.querySelector(".sim-reset");
-      if (resetBtn) resetBtn.addEventListener("click", () => {
-        for (const k of Object.keys(simOverride)) delete simOverride[k];
-        cachedPts = null;
-        renderTable();
       });
     }
     renderTable();
@@ -654,6 +592,258 @@ function initApp(DATA) {
         </div>
       </div>
     </div>`;
+  }
+
+  // ────────── Total tab: full-season standings + single IP projection ──────────
+  // Persistent state (survive reloads / tab switches)
+  let totalSimIP  = safeStorageGet("chobes_total_sim_ip");
+  totalSimIP = totalSimIP ? parseFloat(totalSimIP) : null;
+  let totalCapOnly = safeStorageGet("chobes_total_cap_only");
+  totalCapOnly = totalCapOnly == null ? true : totalCapOnly === "1";
+
+  async function renderTotal() {
+    noteEl.hidden = true;
+    contentEl.innerHTML = `<div class="loading">Loading season totals…</div>`;
+    const cache = await loadDailyCache();
+
+    // Team roster: last month has all 12 in it (some teams may drop out earlier).
+    const teamMeta = {};
+    for (const m of months) for (const t of DATA.months[m].teams) teamMeta[t.team_key] = t.team_name;
+    const teamKeys = Object.keys(cache).filter(tk => teamMeta[tk]);
+    const dateArr = [...new Set(teamKeys.flatMap(tk => Object.keys(cache[tk])))].sort();
+
+    // Accumulate raw components across all dates. (Same math as ensureDailyTotalPts final row.)
+    const cum = {};
+    for (const tk of teamKeys) cum[tk] = { r:0, hr:0, rbi:0, sb:0, k:0, w:0, sv:0, h:0, ab:0, e:0, ip_outs:0, er_num:0, wh_num:0 };
+    for (const d of dateArr) for (const tk of teamKeys) {
+      const s = cache[tk][d] || {};
+      const c = cum[tk];
+      c.r += s.r || 0; c.hr += s.hr || 0; c.rbi += s.rbi || 0; c.sb += s.sb || 0;
+      c.k += s.k || 0; c.w += s.w || 0; c.sv += s.sv || 0;
+      c.h += s.h || 0; c.ab += s.ab || 0; c.ip_outs += s.ip_outs || 0;
+      if (s.obp != null && s.obp > 0 && s.obp < 1 && (s.ab || 0) > 0) {
+        const e = (s.obp * s.ab - s.h) / (1 - s.obp);
+        if (e > 0) c.e += e;
+      }
+      if (s.era != null && s.ip_outs > 0) c.er_num += s.era * (s.ip_outs / 3) / 9;
+      if (s.whip != null && s.ip_outs > 0) c.wh_num += s.whip * (s.ip_outs / 3);
+    }
+
+    // Build baseline totals per team (season-to-date, from summed components).
+    function baseTotals(tk) {
+      const c = cum[tk];
+      const ip = c.ip_outs / 3;
+      return {
+        r: c.r, hr: c.hr, rbi: c.rbi, sb: c.sb,
+        w: c.w, sv: c.sv, k: c.k,
+        h: c.h, ab: c.ab, e: c.e,
+        ip_outs: c.ip_outs,
+        obp: (c.ab + c.e) > 0 ? (c.h + c.e) / (c.ab + c.e) : 0,
+        era: ip > 0 ? c.er_num * 9 / ip : 0,
+        whip: ip > 0 ? c.wh_num / ip : 0,
+      };
+    }
+
+    // Apply projected IP: if capOnly is true, only teams whose actual IP > targetIP
+    // get scaled DOWN; teams below target are left alone. If false, both directions.
+    function projectedTotals(tk) {
+      const base = baseTotals(tk);
+      if (totalSimIP == null || isNaN(totalSimIP) || totalSimIP <= 0) return base;
+      const actualIP = base.ip_outs / 3;
+      if (actualIP <= 0) return base;
+      const scale = totalSimIP / actualIP;
+      if (totalCapOnly && scale >= 1) return base;   // team is UNDER target → no change
+      return { ...base,
+        k:  base.k  * scale,
+        w:  base.w  * scale,
+        sv: base.sv * scale,
+        ip_outs: totalSimIP * 3,
+        // rate stats unchanged (ERA/WHIP/K/9 are IP-independent)
+      };
+    }
+
+    // Compute roto points across all 12 teams for the projected totals.
+    function computePts() {
+      const CATS_HIGH = ["r","hr","rbi","sb","obp","w","sv","k"];
+      const CATS_LOW  = ["era","whip"];
+      const vals = {}; const pts = {};
+      for (const tk of teamKeys) { vals[tk] = projectedTotals(tk); pts[tk] = {}; }
+      const rank = (cat, ascending) => {
+        const arr = teamKeys.map(tk => ({ tk, v: vals[tk][cat] ?? 0 })).sort((a,b) => ascending ? a.v - b.v : b.v - a.v);
+        let i = 0;
+        while (i < arr.length) {
+          let j = i;
+          while (j+1 < arr.length && arr[j+1].v === arr[i].v) j++;
+          const avgRank = (i + 1 + j + 1) / 2;
+          for (let k = i; k <= j; k++) pts[arr[k].tk][cat + "_pts"] = avgRank;
+          i = j + 1;
+        }
+      };
+      for (const cat of CATS_HIGH) rank(cat, true);
+      for (const cat of CATS_LOW)  rank(cat, false);
+      for (const tk of teamKeys) {
+        pts[tk].total_pts = [...CATS_HIGH, ...CATS_LOW].reduce((s,c) => s + (pts[tk][c + "_pts"] || 0), 0);
+      }
+      return { vals, pts };
+    }
+
+    let totalSort = { key: "total_pts", dir: "desc" };
+    function sortValueTotal(t, key, vals) {
+      if (key === "team_name") return t.team_name;
+      if (key === "total_pts") return t.pts.total_pts;
+      if (key.endsWith("_pts")) return t.pts[key] || 0;
+      if (key === "k9") {
+        const v = vals[t.team_key];
+        return v.ip_outs > 0 ? (v.k * 9) / (v.ip_outs / 3) : 0;
+      }
+      return vals[t.team_key][key] ?? 0;
+    }
+
+    contentEl.innerHTML = "";
+
+    // Toolbar: IP input + cap-only checkbox + view toggle + reset
+    const toolbar = document.createElement("div");
+    toolbar.className = "month-toolbar";
+    toolbar.innerHTML = `
+      <div class="total-projection">
+        <label>Project IP to: <input type="number" step="1" min="0" placeholder="e.g. 1400" value="${totalSimIP != null ? totalSimIP : ""}" id="total-ip"></label>
+        <label class="cap-only-label"><input type="checkbox" id="total-cap-only" ${totalCapOnly ? "checked" : ""}> Only decrease overage (never scale up)</label>
+        <button id="total-reset" ${totalSimIP == null ? "disabled" : ""}>Reset</button>
+      </div>
+      <div class="view-toggle">
+        <button data-mode="stats"${monthViewMode==='stats'?' class="on"':''}>Stats</button>
+        <button data-mode="points"${monthViewMode==='points'?' class="on"':''}>Points</button>
+        <button data-mode="both"${monthViewMode==='both'?' class="on"':''}>Both</button>
+      </div>
+      <div class="sort-hint">Tap any column to sort</div>
+    `;
+    contentEl.appendChild(toolbar);
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "table-wrap";
+    contentEl.appendChild(wrapper);
+
+    function render() {
+      const { vals, pts } = computePts();
+      const teams = teamKeys.map(tk => ({
+        team_key: tk,
+        team_name: teamMeta[tk],
+        totals: vals[tk],
+        pts: pts[tk],
+      }));
+      const N = teams.length;
+
+      const mult = totalSort.dir === "asc" ? 1 : -1;
+      teams.sort((a, b) => {
+        const va = sortValueTotal(a, totalSort.key, vals), vb = sortValueTotal(b, totalSort.key, vals);
+        if (typeof va === "string") return mult * va.localeCompare(vb);
+        return mult * (va - vb);
+      });
+      const byPts = teams.slice().sort((a, b) => b.pts.total_pts - a.pts.total_pts);
+      const rankMap = new Map();
+      byPts.forEach((t, i) => rankMap.set(t.team_key, i + 1));
+
+      const cols = [
+        { key: "rank",       lab: "#",     sort: null },
+        { key: "team_name",  lab: "Team",  sort: "team_name" },
+        ...CATS.map(([k, lab, , meta]) => {
+          const unscored = meta && meta.unscored;
+          if (unscored) return { key: k, lab, sort: k, cat: k, type: "stat", unscored: true };
+          if (monthViewMode === "both") return { key: k, lab, sort: k, cat: k, type: "both" };
+          if (monthViewMode === "stats") return { key: k, lab, sort: k, cat: k, type: "stat" };
+          return { key: k + "_pts", lab, sort: k + "_pts", cat: k, type: "pts" };
+        }),
+        { key: "total_pts", lab: "Total", sort: "total_pts", strong: true },
+      ];
+
+      const arrow = (c) => {
+        if (!c.sort || c.sort !== totalSort.key) return "";
+        return totalSort.dir === "desc" ? "▼" : "▲";
+      };
+      const thead = "<tr>" + cols.map(c =>
+        `<th class="${c.sort ? 'sortable' : ''} ${c.strong?'strong':''}" data-sort="${c.sort||''}">${c.lab} ${arrow(c)}</th>`
+      ).join("") + "</tr>";
+
+      const projected = totalSimIP != null && !isNaN(totalSimIP) && totalSimIP > 0;
+      const tbody = teams.map(t => {
+        const r = rankMap.get(t.team_key);
+        const rankCls = r === 1 ? "best" : (r === N ? "worst" : "");
+        const cells = cols.map(c => {
+          if (c.key === "rank") return `<td class="rank ${rankCls}">${r}</td>`;
+          if (c.key === "team_name") {
+            const actualIP = ((cum[t.team_key].ip_outs) / 3);
+            let mark = "";
+            if (projected) {
+              if (totalCapOnly && actualIP <= totalSimIP) mark = ` <span class="ip-untouched" title="Actual IP ${actualIP.toFixed(1)} ≤ target ${totalSimIP} — no scaling applied">·</span>`;
+              else if (actualIP > totalSimIP) mark = ` <span class="ip-scaled-down" title="Actual IP ${actualIP.toFixed(1)} scaled down to target ${totalSimIP}">↓</span>`;
+              else mark = ` <span class="ip-scaled-up" title="Actual IP ${actualIP.toFixed(1)} scaled up to target ${totalSimIP}">↑</span>`;
+            }
+            return `<td class="team-name-cell">${esc(t.team_name)}${mark}</td>`;
+          }
+          if (c.key === "total_pts") return `<td class="strong">${t.pts.total_pts}</td>`;
+          if (c.unscored) return `<td class="stat-cell unscored" title="Not scored">${catVal(c.cat, t.totals)}</td>`;
+          if (c.type === "pts") {
+            const p = t.pts[c.cat + "_pts"] || 0;
+            const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
+            return `<td class="pts-cell ${cls}">${p}</td>`;
+          }
+          if (c.type === "both") {
+            const p = t.pts[c.cat + "_pts"] || 0;
+            const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
+            return `<td class="both-cell"><span class="stat-val">${catVal(c.cat, t.totals)}</span><span class="both-sep">/</span><span class="pts-val ${cls}">${p}</span></td>`;
+          }
+          return `<td class="stat-cell">${catVal(c.cat, t.totals)}</td>`;
+        }).join("");
+        return `<tr>${cells}</tr>`;
+      }).join("");
+
+      const banner = projected ? `<div class="sim-banner">
+        <span>⚗️ Projecting all teams to <b>${totalSimIP} IP</b> ${totalCapOnly ? "(cap-only — teams under target unchanged)" : "(scale up + down)"}. Rate stats unchanged; K/W/SV scaled where applicable; rankings recomputed.</span>
+      </div>` : "";
+      wrapper.innerHTML = banner + `<table class="teams-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+      wrapper.querySelectorAll("th.sortable").forEach(th => {
+        th.addEventListener("click", () => {
+          const k = th.getAttribute("data-sort");
+          if (totalSort.key === k) totalSort.dir = totalSort.dir === "asc" ? "desc" : "asc";
+          else { totalSort.key = k; totalSort.dir = k === "team_name" ? "asc" : "desc"; }
+          render();
+        });
+      });
+    }
+
+    // Wire toolbar controls
+    const ipInput  = document.getElementById("total-ip");
+    const capChk   = document.getElementById("total-cap-only");
+    const resetBtn = document.getElementById("total-reset");
+    ipInput.addEventListener("input", () => {
+      const v = parseFloat(ipInput.value);
+      totalSimIP = (isNaN(v) || v <= 0) ? null : v;
+      safeStorageSet("chobes_total_sim_ip", totalSimIP == null ? "" : String(totalSimIP));
+      resetBtn.disabled = totalSimIP == null;
+      render();
+    });
+    capChk.addEventListener("change", () => {
+      totalCapOnly = capChk.checked;
+      safeStorageSet("chobes_total_cap_only", totalCapOnly ? "1" : "0");
+      render();
+    });
+    resetBtn.addEventListener("click", () => {
+      totalSimIP = null;
+      ipInput.value = "";
+      safeStorageSet("chobes_total_sim_ip", "");
+      resetBtn.disabled = true;
+      render();
+    });
+    toolbar.querySelectorAll(".view-toggle button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        monthViewMode = btn.getAttribute("data-mode");
+        safeStorageSet("chobes_view_mode", monthViewMode);
+        toolbar.querySelectorAll(".view-toggle button").forEach(b => b.classList.toggle("on", b === btn));
+        render();
+      });
+    });
+
+    render();
   }
 
   function renderPayments() {
