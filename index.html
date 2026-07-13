@@ -1130,9 +1130,16 @@ function initApp(DATA) {
   // Precompute daily total roto points per team, treating each date as if the
   // season ended that day. All 12 teams get cumulative-through-date components,
   // ranked in each cat (avg rank for ties), summed. Cached on first compute.
-  let dailyTotalPtsCache = null;
+  // Cache keyed by range signature so a new range (from brush drag) recomputes
+  // from a zero-baseline starting at dateArr[0]. Season-total view uses key
+  // matching the full season; a zoom into "Jun 1 → Jul 12" gets its own entry
+  // where each team's stats accumulate from Jun 1, and ranks/points reflect
+  // in-range performance only (not season-cumulative sliced to the window).
+  let dailyTotalPtsCache = new Map();
   function ensureDailyTotalPts(cache, dateArr) {
-    if (dailyTotalPtsCache) return dailyTotalPtsCache;
+    if (!dateArr || dateArr.length === 0) return {};
+    const key = `${dateArr[0]}_${dateArr[dateArr.length - 1]}_${dateArr.length}`;
+    if (dailyTotalPtsCache.has(key)) return dailyTotalPtsCache.get(key);
     const teamKeys = Object.keys(cache);
     const cats_high = ["r","hr","rbi","sb","obp","w","sv","k"];
     const cats_low = ["era","whip"];
@@ -1184,8 +1191,8 @@ function initApp(DATA) {
       for (const cat of cats_low)  rank(cat, false);  // less = better → highest gets rank 1
       for (const tk of teamKeys) result[tk][d] = points[tk];
     }
-    dailyTotalPtsCache = result;
-    return dailyTotalPtsCache;
+    dailyTotalPtsCache.set(key, result);
+    return result;
   }
 
   // Compute a value at date D for team+stat with cumulative-in-range semantics.
@@ -1196,7 +1203,11 @@ function initApp(DATA) {
     let cum_h = 0, cum_ab = 0, cum_e = 0, cum_ip = 0, cum_er = 0, cum_wh = 0;
     let running = 0;
     if (stat === "total_pts") {
-      const dtp = ensureDailyTotalPts(allCache, fullDateArr);
+      // Range-scoped: accumulation zeroes out at dates[0], so ranks + points
+      // reflect performance ONLY within the visible range. Dragging the brush
+      // recomputes for the new range (cached per range signature). If the user
+      // wants season-to-date totals, they zoom out to the full range.
+      const dtp = ensureDailyTotalPts(allCache, useCum ? dates : fullDateArr);
       for (const d of dates) {
         const v = dtp[teamKey]?.[d];
         pts.push({ d, v: (v == null || isNaN(v)) ? null : v });
