@@ -149,8 +149,11 @@
   .team-cb:hover { color:var(--text); }
   .chart-svg-wrap { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 16px 8px; position:relative; user-select:none; }
   .chart-svg-wrap svg { width:100%; height:auto; display:block; }
-  /* Smooth path morphing when brush drag re-computes series (Chrome 108+, Safari 16+, Firefox 129+). */
-  #chart-svg path.series-line { transition: d 180ms cubic-bezier(0.4, 0, 0.2, 1), stroke 180ms ease; }
+  /* Smooth path morphing when brush drag re-computes series. Requires all
+     paths to have the SAME structure (same number of Bezier segments), which
+     is why smoothPath resamples to a fixed CHART_PATH_N. Browser support:
+     Chrome 108+, Safari 16+, Firefox 129+. Older browsers fall back to snap. */
+  #chart-svg path.series-line { transition: d 260ms cubic-bezier(0.22, 1, 0.36, 1), stroke 200ms ease; }
   /* Static SVG regions (grid, axes, labels) can re-render normally; only the path morphs. */
   .chart-hint { color:var(--text-mute); font:500 11px/1.4 var(--mono); margin-top:8px; }
   .chart-stats { flex:1 1 320px; }
@@ -1104,6 +1107,33 @@ function initApp(DATA) {
   // Fritsch–Carlson monotone cubic Hermite → SVG cubic Bezier segments.
   // Guarantees the interpolated curve stays MONOTONE between data points and
   // never overshoots the data range (unlike naive Catmull-Rom/Bezier).
+  // Resample a set of {x,y} points to a fixed count so successive renders
+  // always output paths with the SAME structure (same number of Bezier
+  // segments). This is what makes the CSS `transition: d` interpolate
+  // smoothly between drag frames — different segment counts break morphing
+  // and the browser snaps instead. N=200 is smooth enough visually with
+  // negligible extra draw cost.
+  const CHART_PATH_N = 200;
+  function resamplePath(pts, n) {
+    if (pts.length === 0) return pts;
+    if (pts.length === 1) {
+      const p = pts[0];
+      return Array.from({length: n}, () => ({ x: p.x, y: p.y }));
+    }
+    const xMin = pts[0].x, xMax = pts[pts.length - 1].x;
+    const out = new Array(n);
+    let j = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const targetX = xMin + t * (xMax - xMin);
+      while (j < pts.length - 2 && pts[j + 1].x < targetX) j++;
+      const a = pts[j], b = pts[j + 1] || a;
+      const dx = b.x - a.x;
+      const u = dx === 0 ? 0 : (targetX - a.x) / dx;
+      out[i] = { x: targetX, y: a.y + (b.y - a.y) * u };
+    }
+    return out;
+  }
   function smoothPath(pts) {
     const n = pts.length;
     if (n === 0) return "";
@@ -1438,7 +1468,11 @@ function initApp(DATA) {
         for (const s of series) {
           const drawn = s.pts.filter(p => p.v != null).map(p => ({ x: xForDate(p.d), y: yForPoint(s.stat, p.v) }));
           if (!drawn.length) continue;
-          pathSpecs.push({ key: `${s.tk}|${s.stat}`, d: smoothPath(drawn), stroke: s.color, dash: s.dash || "" });
+          // Resample to fixed N segments so the CSS `transition: d` can
+          // interpolate smoothly between drag frames (different segment
+          // counts = snap instead of morph).
+          const resampled = resamplePath(drawn, CHART_PATH_N);
+          pathSpecs.push({ key: `${s.tk}|${s.stat}`, d: smoothPath(resampled), stroke: s.color, dash: s.dash || "" });
         }
         let paths = pathSpecs.map(p =>
           `<path class="series-line" data-key="${p.key}" d="${p.d}" fill="none" stroke="${p.stroke}" stroke-width="2" opacity="0.9"${p.dash?` stroke-dasharray="${p.dash}"`:""}/>`
@@ -1573,6 +1607,29 @@ function initApp(DATA) {
         mb.querySelector("#mb-handle-l")?.addEventListener("mousedown", e => startDrag("left", e));
         mb.querySelector("#mb-handle-r")?.addEventListener("mousedown", e => startDrag("right", e));
         mb.querySelector("#mb-window")?.addEventListener("mousedown", e => startDrag("window", e));
+        // Throttle drag-driven redraws to one per animation frame AND coalesce
+        // rapid mousemoves into a single trailing redraw. Both matter for
+        // smoothness: 60Hz mousemoves fire every ~16ms, but the path CSS
+        // transition is 260ms — without throttling, each new redraw cancels
+        // the in-flight interpolation before the eye can see it move. rAF
+        // gates redraws to render cadence; the ~120ms trailing debounce lets
+        // the last transition settle after the user pauses on a spot.
+        let rafPending = false;
+        let lastMoveTs = 0;
+        let trailingRedrawTimer = null;
+        const scheduleRedraw = () => {
+          if (rafPending) return;
+          rafPending = true;
+          requestAnimationFrame(() => {
+            rafPending = false;
+            drawChart();
+            lastMoveTs = performance.now();
+            if (trailingRedrawTimer) clearTimeout(trailingRedrawTimer);
+            trailingRedrawTimer = setTimeout(() => {
+              if (!drag) drawChart();
+            }, 130);
+          });
+        };
         const onMove = e => {
           if (!drag) return;
           const cur = localX(e.clientX);
@@ -1591,7 +1648,7 @@ function initApp(DATA) {
             chartState.zoomTo = dateArr[newTo];
             document.getElementById("chart-from").value = chartState.zoomFrom;
             document.getElementById("chart-to").value = chartState.zoomTo;
-            drawChart();
+            scheduleRedraw();
           }
         };
         const onUp = () => { drag = null; };
