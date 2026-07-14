@@ -1378,56 +1378,57 @@ function initApp(DATA) {
       let seriesCache = {};   // {"team|stat": pts[]}, computed for each redraw
       let plotState = {};     // for tooltip / brush
 
-      // ── JS-based smooth path interpolation (Safari/Firefox/Chrome-safe). ──
-      // Each key: {current: pts[], target: pts[], startTs, durationMs}.
-      // On new target, we snapshot the currently-interpolated points as the
-      // new `current`, retarget, and restart the timer. rAF loop runs while
-      // any path has t<1. All paths share CHART_PATH_N samples so index-by-
-      // index interpolation is trivially valid.
+      // ── JS spring-chase path interpolator (Safari/Firefox/Chrome-safe). ──
+      // Prior easeOutCubic implementation restarted the timer on every drag
+      // frame → target reset before interpolation could visibly progress
+      // (drag fires @ 60Hz, interp needs ~280ms, → never got past t=6%).
+      // Spring-chase fixes it: each frame, current += (target - current) *
+      // STIFFNESS. Retargeting just swaps `target` — the chase continues
+      // from wherever `current` sits. Behaves as continuous damping across
+      // rapid retargets. STIFFNESS 0.18 → half-distance in ~3 frames (~50ms),
+      // 90% arrival by ~13 frames (~215ms). Feels responsive + smooth.
       const pathAnimState = new Map();
       let animRaf = null;
-      const ANIM_MS = 280;
-      const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
-      function snapshotCurrent(st, now) {
-        const t = Math.min(1, (now - st.startTs) / st.durationMs);
-        if (t >= 1) return st.target;
-        const e = easeOutCubic(t);
-        const out = new Array(st.current.length);
-        for (let i = 0; i < st.current.length; i++) {
-          const c = st.current[i], g = st.target[i];
-          out[i] = { x: c.x + (g.x - c.x) * e, y: c.y + (g.y - c.y) * e };
-        }
-        return out;
-      }
+      const STIFFNESS = 0.18;
+      const SETTLE_PX = 0.35;   // stop iterating once every point is <0.35px from target
       function scheduleAnimTick() {
         if (animRaf) return;
         const tick = () => {
-          const now = performance.now();
+          animRaf = null;
           let anyActive = false;
           for (const [key, st] of pathAnimState) {
             const el = svgEl.querySelector(`path.series-line[data-key="${CSS.escape(key)}"]`);
             if (!el) continue;
-            const t = Math.min(1, (now - st.startTs) / st.durationMs);
-            const interp = snapshotCurrent(st, now);
-            el.setAttribute("d", smoothPath(interp));
-            if (t < 1) anyActive = true;
-            else st.current = st.target;
+            let stillMoving = false;
+            const cur = st.current, tgt = st.target;
+            for (let i = 0; i < cur.length; i++) {
+              const dx = tgt[i].x - cur[i].x;
+              const dy = tgt[i].y - cur[i].y;
+              cur[i].x += dx * STIFFNESS;
+              cur[i].y += dy * STIFFNESS;
+              if (!stillMoving && (Math.abs(dx) > SETTLE_PX || Math.abs(dy) > SETTLE_PX)) stillMoving = true;
+            }
+            if (!stillMoving) {
+              // Snap to target for pixel-exact resting state
+              for (let i = 0; i < cur.length; i++) { cur[i].x = tgt[i].x; cur[i].y = tgt[i].y; }
+            } else {
+              anyActive = true;
+            }
+            el.setAttribute("d", smoothPath(cur));
           }
           if (anyActive) animRaf = requestAnimationFrame(tick);
-          else animRaf = null;
         };
         animRaf = requestAnimationFrame(tick);
       }
       function updatePathSmoothly(key, targetPts) {
-        const now = performance.now();
         const st = pathAnimState.get(key);
         if (st) {
-          st.current = snapshotCurrent(st, now);
+          // Only swap target — do NOT restart current. The chase continues.
           st.target = targetPts;
-          st.startTs = now;
-          st.durationMs = ANIM_MS;
         } else {
-          pathAnimState.set(key, { current: targetPts, target: targetPts, startTs: now - ANIM_MS, durationMs: ANIM_MS });
+          // First seed: current === target, no visible motion.
+          const clone = targetPts.map(p => ({ x: p.x, y: p.y }));
+          pathAnimState.set(key, { current: clone, target: targetPts });
         }
         scheduleAnimTick();
       }
@@ -1593,17 +1594,13 @@ function initApp(DATA) {
           });
         } else {
           svgEl.innerHTML = `${staticSvg.replace("<g id=\"chart-brush-overlay\">", "<g id=\"chart-paths\">"+paths+"</g><g id=\"chart-brush-overlay\">")}`;
-          // Seed the interpolator so subsequent in-place updates have a
-          // baseline `current` to morph from. On full rebuilds we DON'T
-          // animate (would be jarring on stat/team toggle) — just seed both
-          // current and target to the same pts.
+          // Seed the interpolator with current === target so subsequent
+          // in-place updates chase from the on-screen position. Cloning
+          // target for `current` so retarget mutations don't share arrays.
           pathAnimState.clear();
           for (const spec of pathSpecs) {
-            pathAnimState.set(spec.key, {
-              current: spec.pts, target: spec.pts,
-              startTs: performance.now() - ANIM_MS,
-              durationMs: ANIM_MS,
-            });
+            const clone = spec.pts.map(p => ({ x: p.x, y: p.y }));
+            pathAnimState.set(spec.key, { current: clone, target: spec.pts });
           }
         }
 
