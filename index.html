@@ -149,12 +149,10 @@
   .team-cb:hover { color:var(--text); }
   .chart-svg-wrap { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 16px 8px; position:relative; user-select:none; }
   .chart-svg-wrap svg { width:100%; height:auto; display:block; }
-  /* Smooth path morphing when brush drag re-computes series. Requires all
-     paths to have the SAME structure (same number of Bezier segments), which
-     is why smoothPath resamples to a fixed CHART_PATH_N. Browser support:
-     Chrome 108+, Safari 16+, Firefox 129+. Older browsers fall back to snap. */
-  #chart-svg path.series-line { transition: d 260ms cubic-bezier(0.22, 1, 0.36, 1), stroke 200ms ease; }
-  /* Static SVG regions (grid, axes, labels) can re-render normally; only the path morphs. */
+  /* Path morphing is done via a JS rAF interpolator (see pathAnimState in
+     drawChart) — Safari's CSS d-attribute transition is unreliable, so we
+     interpolate point-by-point in JS. Only stroke gets a CSS transition. */
+  #chart-svg path.series-line { transition: stroke 200ms ease; }
   .chart-hint { color:var(--text-mute); font:500 11px/1.4 var(--mono); margin-top:8px; }
   .chart-stats { flex:1 1 320px; }
   .chart-stats-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(66px, 1fr)); gap:4px 8px; margin-top:2px; }
@@ -1380,6 +1378,60 @@ function initApp(DATA) {
       let seriesCache = {};   // {"team|stat": pts[]}, computed for each redraw
       let plotState = {};     // for tooltip / brush
 
+      // ── JS-based smooth path interpolation (Safari/Firefox/Chrome-safe). ──
+      // Each key: {current: pts[], target: pts[], startTs, durationMs}.
+      // On new target, we snapshot the currently-interpolated points as the
+      // new `current`, retarget, and restart the timer. rAF loop runs while
+      // any path has t<1. All paths share CHART_PATH_N samples so index-by-
+      // index interpolation is trivially valid.
+      const pathAnimState = new Map();
+      let animRaf = null;
+      const ANIM_MS = 280;
+      const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+      function snapshotCurrent(st, now) {
+        const t = Math.min(1, (now - st.startTs) / st.durationMs);
+        if (t >= 1) return st.target;
+        const e = easeOutCubic(t);
+        const out = new Array(st.current.length);
+        for (let i = 0; i < st.current.length; i++) {
+          const c = st.current[i], g = st.target[i];
+          out[i] = { x: c.x + (g.x - c.x) * e, y: c.y + (g.y - c.y) * e };
+        }
+        return out;
+      }
+      function scheduleAnimTick() {
+        if (animRaf) return;
+        const tick = () => {
+          const now = performance.now();
+          let anyActive = false;
+          for (const [key, st] of pathAnimState) {
+            const el = svgEl.querySelector(`path.series-line[data-key="${CSS.escape(key)}"]`);
+            if (!el) continue;
+            const t = Math.min(1, (now - st.startTs) / st.durationMs);
+            const interp = snapshotCurrent(st, now);
+            el.setAttribute("d", smoothPath(interp));
+            if (t < 1) anyActive = true;
+            else st.current = st.target;
+          }
+          if (anyActive) animRaf = requestAnimationFrame(tick);
+          else animRaf = null;
+        };
+        animRaf = requestAnimationFrame(tick);
+      }
+      function updatePathSmoothly(key, targetPts) {
+        const now = performance.now();
+        const st = pathAnimState.get(key);
+        if (st) {
+          st.current = snapshotCurrent(st, now);
+          st.target = targetPts;
+          st.startTs = now;
+          st.durationMs = ANIM_MS;
+        } else {
+          pathAnimState.set(key, { current: targetPts, target: targetPts, startTs: now - ANIM_MS, durationMs: ANIM_MS });
+        }
+        scheduleAnimTick();
+      }
+
       const drawChart = () => {
         const stats = [...chartState.selectedStats];
         if (stats.length === 0) { svgEl.innerHTML = `<text x="450" y="200" fill="var(--text-mute)" text-anchor="middle">Pick at least one stat.</text>`; return; }
@@ -1468,11 +1520,10 @@ function initApp(DATA) {
         for (const s of series) {
           const drawn = s.pts.filter(p => p.v != null).map(p => ({ x: xForDate(p.d), y: yForPoint(s.stat, p.v) }));
           if (!drawn.length) continue;
-          // Resample to fixed N segments so the CSS `transition: d` can
-          // interpolate smoothly between drag frames (different segment
-          // counts = snap instead of morph).
+          // Fixed-N resample so index-by-index interpolation in the rAF
+          // animator is valid regardless of visible date-range length.
           const resampled = resamplePath(drawn, CHART_PATH_N);
-          pathSpecs.push({ key: `${s.tk}|${s.stat}`, d: smoothPath(resampled), stroke: s.color, dash: s.dash || "" });
+          pathSpecs.push({ key: `${s.tk}|${s.stat}`, pts: resampled, d: smoothPath(resampled), stroke: s.color, dash: s.dash || "" });
         }
         let paths = pathSpecs.map(p =>
           `<path class="series-line" data-key="${p.key}" d="${p.d}" fill="none" stroke="${p.stroke}" stroke-width="2" opacity="0.9"${p.dash?` stroke-dasharray="${p.dash}"`:""}/>`
@@ -1533,13 +1584,27 @@ function initApp(DATA) {
           existingPathsGroup.querySelectorAll("path.series-line").forEach(el => {
             const spec = byKey.get(el.getAttribute("data-key"));
             if (!spec) return;
-            el.setAttribute("d", spec.d);
+            // Stroke/dash change instantly (or via short CSS transition on stroke).
             el.setAttribute("stroke", spec.stroke);
             if (spec.dash) el.setAttribute("stroke-dasharray", spec.dash);
             else el.removeAttribute("stroke-dasharray");
+            // Shape morphs via the JS rAF interpolator (Safari-safe).
+            updatePathSmoothly(spec.key, spec.pts);
           });
         } else {
           svgEl.innerHTML = `${staticSvg.replace("<g id=\"chart-brush-overlay\">", "<g id=\"chart-paths\">"+paths+"</g><g id=\"chart-brush-overlay\">")}`;
+          // Seed the interpolator so subsequent in-place updates have a
+          // baseline `current` to morph from. On full rebuilds we DON'T
+          // animate (would be jarring on stat/team toggle) — just seed both
+          // current and target to the same pts.
+          pathAnimState.clear();
+          for (const spec of pathSpecs) {
+            pathAnimState.set(spec.key, {
+              current: spec.pts, target: spec.pts,
+              startTs: performance.now() - ANIM_MS,
+              durationMs: ANIM_MS,
+            });
+          }
         }
 
         plotState = { PAD, IW, IH, W, H, inRange, xForDate, yForPoint, series, statRange, stats, multiStat };
