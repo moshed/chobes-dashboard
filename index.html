@@ -168,6 +168,9 @@
   .chart-reset-btn:hover { background:var(--panel-3); color:var(--text); }
   .chart-presets { display:flex; gap:6px; margin:14px 0 4px; flex-wrap:wrap; align-items:center; }
   .chart-preset-lab { color:var(--text-mute); font:600 10.5px/1 var(--mono); letter-spacing:0.08em; text-transform:uppercase; margin-right:2px; }
+  .chart-drag-tt { position:fixed; pointer-events:none; z-index:20; background:var(--panel-3); border:1px solid var(--border); border-radius:6px; padding:5px 9px; font:600 12px/1 var(--mono); color:var(--text); box-shadow:0 4px 14px rgba(0,0,0,0.35); transform:translate(-50%, -140%); white-space:nowrap; display:none; }
+  .chart-drag-tt.on { display:block; }
+  .chart-drag-tt .tt-range { color:var(--text-dim); font-size:10.5px; font-weight:500; margin-top:2px; }
   .preset-btn { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:5px; padding:5px 10px; font:600 11px/1 var(--mono); color:var(--text-dim); cursor:pointer; transition:.15s; }
   .preset-btn:hover { background:var(--panel-3); color:var(--text); }
   .preset-btn.active { background:var(--accent); border-color:var(--accent); color:#0e1218; }
@@ -373,7 +376,7 @@ function initApp(DATA) {
     b.className = "tab";
     b.setAttribute("data-slug", slugFor(m));
     const liveDot = isLive(m) ? ' <span style="color:var(--warn)">●</span>' : "";
-    b.innerHTML = `${monthLabel(m)}${liveDot} <span class="tab-count">${DATA.months[m].teams.length} teams</span>`;
+    b.innerHTML = `${monthLabel(m)}${liveDot}`;
     b.addEventListener("click", () => { location.hash = "#" + slugFor(m); });
     nav.appendChild(b);
     monthButtons[m] = b;
@@ -382,7 +385,7 @@ function initApp(DATA) {
   const totalTab = document.createElement("button");
   totalTab.className = "tab";
   totalTab.setAttribute("data-slug", "total");
-  totalTab.innerHTML = `🏆 Total`;
+  totalTab.innerHTML = `Total`;
   totalTab.addEventListener("click", () => { location.hash = "#total"; });
   nav.appendChild(totalTab);
 
@@ -390,7 +393,7 @@ function initApp(DATA) {
   const chartTab = document.createElement("button");
   chartTab.className = "tab chart";
   chartTab.setAttribute("data-slug", "chart");
-  chartTab.innerHTML = `📈 Chart`;
+  chartTab.innerHTML = `Chart`;
   chartTab.addEventListener("click", () => { location.hash = "#chart"; });
   nav.appendChild(chartTab);
 
@@ -398,7 +401,7 @@ function initApp(DATA) {
   const payTab = document.createElement("button");
   payTab.className = "tab money";
   payTab.setAttribute("data-slug", "payments");
-  payTab.innerHTML = `💰 Payments`;
+  payTab.innerHTML = `Payments`;
   payTab.addEventListener("click", () => { location.hash = "#payments"; });
   nav.appendChild(payTab);
 
@@ -1698,6 +1701,23 @@ function initApp(DATA) {
             }, 130);
           });
         };
+        // Floating tooltip anchored to the cursor showing the date under
+        // the handle being dragged (or the window range when dragging the
+        // whole window).
+        let dragTT = document.querySelector(".chart-drag-tt");
+        if (!dragTT) {
+          dragTT = document.createElement("div");
+          dragTT.className = "chart-drag-tt";
+          document.body.appendChild(dragTT);
+        }
+        const fmtDBig = d => `${d.slice(5,7)}/${d.slice(8,10)}/${d.slice(2,4)}`;
+        const showDragTT = (clientX, clientY, primary, secondary) => {
+          dragTT.classList.add("on");
+          dragTT.innerHTML = `${primary}${secondary ? `<div class="tt-range">${secondary}</div>` : ""}`;
+          dragTT.style.left = clientX + "px";
+          dragTT.style.top  = clientY + "px";
+        };
+        const hideDragTT = () => dragTT.classList.remove("on");
         const onMove = e => {
           if (!drag) return;
           const cur = localX(e.clientX);
@@ -1711,6 +1731,11 @@ function initApp(DATA) {
             newFrom = Math.max(0, Math.min(N - 1 - width, drag.startFrom + iDx));
             newTo = newFrom + width;
           }
+          // Always update tooltip position, even if the date index didn't
+          // change (cursor moved a fraction of a step) — feels more responsive.
+          const primaryD = drag.type === "right" ? dateArr[newTo] : dateArr[newFrom];
+          const secondary = drag.type === "window" ? `${fmtDBig(dateArr[newFrom])} → ${fmtDBig(dateArr[newTo])}` : "";
+          showDragTT(e.clientX, e.clientY, fmtDBig(primaryD), secondary);
           if (newFrom !== dateArr.indexOf(chartState.zoomFrom) || newTo !== dateArr.indexOf(chartState.zoomTo)) {
             chartState.zoomFrom = dateArr[newFrom];
             chartState.zoomTo = dateArr[newTo];
@@ -1719,7 +1744,7 @@ function initApp(DATA) {
             scheduleRedraw();
           }
         };
-        const onUp = () => { drag = null; };
+        const onUp = () => { drag = null; hideDragTT(); if (typeof renderPresets === "function") renderPresets(); };
         window.addEventListener("mousemove", onMove);
         window.addEventListener("mouseup", onUp);
         // Also touch support
@@ -1779,12 +1804,21 @@ function initApp(DATA) {
         html += `</div>`;
         ttEl.innerHTML = html;
         ttEl.style.display = "block";
-        // position tooltip
+        // Position tooltip. Flip to LEFT of the cursor once we're past the
+        // chart midpoint, and use a larger horizontal offset than before so
+        // the tooltip doesn't cover the cursor or the vertical guide line.
+        // Prior threshold (wrapRect.width - 220) fired too late — tooltip
+        // clipped the right side of the chart AND crowded the guide line.
         const wrapRect = svgEl.parentElement.getBoundingClientRect();
         const scaleX = wrapRect.width / 900;
         const tipX = gx * scaleX;
-        const flip = tipX > wrapRect.width - 220;
-        ttEl.style.left = (flip ? tipX - 8 : tipX + 12) + "px";
+        const ttW = ttEl.getBoundingClientRect().width || 260;
+        // Flip when the RIGHT edge of a right-anchored tooltip would spill
+        // past the chart wrap. Also flip past ~55% so hovering at the right
+        // side consistently pushes the tooltip to the LEFT of the cursor.
+        const flip = (tipX + 20 + ttW > wrapRect.width) || (tipX > wrapRect.width * 0.55);
+        const gap = 22;
+        ttEl.style.left = (flip ? tipX - gap : tipX + gap) + "px";
         ttEl.style.transform = flip ? "translateX(-100%)" : "";
         ttEl.style.top = "16px";
       });
