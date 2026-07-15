@@ -166,6 +166,8 @@
   .ctrl-hint { color:var(--text-mute); font-weight:400; text-transform:none; letter-spacing:0; margin-left:6px; font-size:10px; }
   .chart-reset-btn { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:6px; padding:6px 12px; font:600 11px/1 var(--mono); color:var(--text-dim); cursor:pointer; }
   .chart-reset-btn:hover { background:var(--panel-3); color:var(--text); }
+  .ctrl-select { background:var(--panel-2); border:1px solid var(--border-soft); color:var(--text); font:600 12px/1.2 var(--mono); padding:6px 8px; border-radius:5px; cursor:pointer; -webkit-appearance:menulist; }
+  .ctrl-select:focus { outline:1px solid var(--accent); }
   .chart-presets { display:flex; gap:6px; margin:14px 0 4px; flex-wrap:wrap; align-items:center; }
   .chart-preset-lab { color:var(--text-mute); font:600 10.5px/1 var(--mono); letter-spacing:0.08em; text-transform:uppercase; margin-right:2px; }
   .chart-drag-tt { position:fixed; pointer-events:none; z-index:20; background:var(--panel-3); border:1px solid var(--border); border-radius:6px; padding:5px 9px; font:600 12px/1 var(--mono); color:var(--text); box-shadow:0 4px 14px rgba(0,0,0,0.35); transform:translate(-50%, -140%); white-space:nowrap; display:none; }
@@ -1626,6 +1628,12 @@ function initApp(DATA) {
             <div class="chart-stats-groups">${statChecks}</div>
           </div>
           <div class="ctrl">
+            <label class="ctrl-lab">Preset</label>
+            <select id="chart-preset-select" class="ctrl-select">
+              <option value="">Custom</option>
+            </select>
+          </div>
+          <div class="ctrl">
             <label class="ctrl-lab">From</label>
             <input type="date" id="chart-from" value="${chartState.zoomFrom}" min="${dateArr[0]}" max="${dateArr[dateArr.length-1]}">
           </div>
@@ -1646,7 +1654,6 @@ function initApp(DATA) {
           </div>
           <div class="chart-teams-grid">${teamCheckboxes}</div>
         </div>
-        <div class="chart-presets" id="chart-presets"></div>
         <div class="chart-range-bar">
           <div class="chart-range-label" id="chart-range-lab"></div>
           <button id="chart-reset" class="chart-reset-btn">Reset zoom</button>
@@ -2242,25 +2249,35 @@ function initApp(DATA) {
         return presets;
       }
       function renderPresets() {
-        const wrap = document.getElementById("chart-presets");
-        if (!wrap) return;
+        const sel = document.getElementById("chart-preset-select");
+        if (!sel) return;
         const presets = getPresets();
-        wrap.innerHTML = '<span class="chart-preset-lab">Range</span>' + presets.map(p => {
-          const active = chartState.zoomFrom === p.from && chartState.zoomTo === p.to;
-          return `<button class="preset-btn${active ? ' active' : ''}" data-id="${p.id}" data-from="${p.from}" data-to="${p.to}">${p.label}</button>`;
-        }).join("");
-        wrap.querySelectorAll(".preset-btn").forEach(btn => {
-          btn.addEventListener("click", () => {
-            const { from, to } = clampToRange(btn.getAttribute("data-from"), btn.getAttribute("data-to"));
-            chartState.zoomFrom = from;
-            chartState.zoomTo = to;
-            document.getElementById("chart-from").value = from;
-            document.getElementById("chart-to").value = to;
-            drawChart();
-            renderPresets();
-          });
-        });
+        // Build options + reflect current state. When the range matches a
+        // preset, its option is selected; otherwise "Custom" (empty value).
+        let activeId = "";
+        for (const p of presets) {
+          if (chartState.zoomFrom === p.from && chartState.zoomTo === p.to) { activeId = p.id; break; }
+        }
+        sel.innerHTML = '<option value="">Custom</option>' + presets.map(p =>
+          `<option value="${p.id}" data-from="${p.from}" data-to="${p.to}"${p.id === activeId ? " selected" : ""}>${p.label}</option>`
+        ).join("");
       }
+      // One-time listener to react to preset changes. Idempotent — attaches
+      // once per chart render (the tab re-renders whole svgEl on tab route
+      // but the dropdown DOM node with this id only exists inside renderChart).
+      document.getElementById("chart-preset-select")?.addEventListener("change", (e) => {
+        const opt = e.target.selectedOptions[0];
+        const from = opt?.getAttribute("data-from");
+        const to = opt?.getAttribute("data-to");
+        if (!from || !to) return;   // "Custom" chosen — no-op
+        const clamped = clampToRange(from, to);
+        chartState.zoomFrom = clamped.from;
+        chartState.zoomTo = clamped.to;
+        document.getElementById("chart-from").value = clamped.from;
+        document.getElementById("chart-to").value = clamped.to;
+        drawChart();
+        renderPresets();
+      });
       renderPresets();
       const allTeamKeys = Object.keys(teamsMeta);
       const updateTeamToggleLabel = () => {
