@@ -171,6 +171,27 @@
   .chart-drag-tt { position:fixed; pointer-events:none; z-index:20; background:var(--panel-3); border:1px solid var(--border); border-radius:6px; padding:5px 9px; font:600 12px/1 var(--mono); color:var(--text); box-shadow:0 4px 14px rgba(0,0,0,0.35); transform:translate(-50%, -140%); white-space:nowrap; display:none; }
   .chart-drag-tt.on { display:block; }
   .chart-drag-tt .tt-range { color:var(--text-dim); font-size:10.5px; font-weight:500; margin-top:2px; }
+  /* Boot loading + failure state (shown before initApp populates content) */
+  .boot-load { padding:32px; color:var(--text-mute); font:500 13px/1.4 var(--sans); text-align:center; }
+  .boot-load.boot-err { color:var(--worst); }
+  .boot-err-title { font:700 15px/1.3 var(--sans); margin-bottom:6px; }
+  .boot-err-msg { color:var(--text-mute); font:500 12px/1.4 var(--mono); word-break:break-word; max-width:640px; margin:0 auto 16px; }
+  .boot-retry { background:var(--panel-2); border:1px solid var(--border); color:var(--text); font:600 12px/1 var(--sans); padding:8px 18px; border-radius:6px; cursor:pointer; }
+  .boot-retry:hover { background:var(--panel-3); }
+  /* "Change over past N days" input pinned near tabs on every tab */
+  .change-toolbar { display:flex; align-items:center; gap:10px; margin:4px 0 14px; padding:8px 12px; background:var(--panel); border:1px solid var(--border-soft); border-radius:8px; flex-wrap:wrap; font:500 12px/1 var(--sans); color:var(--text-dim); }
+  .change-toolbar label { display:inline-flex; align-items:center; gap:6px; }
+  .change-toolbar input[type="number"] { width:60px; background:var(--panel-2); border:1px solid var(--border-soft); color:var(--text); font:600 12px/1 var(--mono); padding:5px 8px; border-radius:5px; -moz-appearance:textfield; }
+  .change-toolbar input[type="number"]::-webkit-outer-spin-button, .change-toolbar input[type="number"]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .change-toolbar input[type="number"]:focus { outline:1px solid var(--accent); }
+  .change-toolbar .cutoff-lab { color:var(--text-mute); font-family:var(--mono); font-size:11px; margin-left:auto; }
+  .change-toolbar .change-clear { background:none; border:none; color:var(--text-mute); font:600 11px/1 var(--mono); cursor:pointer; padding:4px 8px; border-radius:4px; }
+  .change-toolbar .change-clear:hover { color:var(--text); background:var(--panel-2); }
+  .delta-chip { display:inline-block; margin-left:5px; font:600 10px/1 var(--mono); padding:1px 4px; border-radius:3px; vertical-align:1px; letter-spacing:0.02em; }
+  .delta-chip.up   { color:var(--best); background:rgba(72,213,151,0.13); }
+  .delta-chip.down { color:var(--worst); background:rgba(224,90,90,0.14); }
+  .delta-chip.flat { color:var(--text-mute); background:var(--panel-2); }
+  .delta-cell { display:inline-flex; align-items:baseline; gap:4px; }
   .preset-btn { background:var(--panel-2); border:1px solid var(--border-soft); border-radius:5px; padding:5px 10px; font:600 11px/1 var(--mono); color:var(--text-dim); cursor:pointer; transition:.15s; }
   .preset-btn:hover { background:var(--panel-3); color:var(--text); }
   .preset-btn.active { background:var(--accent); border-color:var(--accent); color:#0e1218; }
@@ -302,19 +323,50 @@
 const SUPABASE_URL = "https://mitagjionpweuscjncih.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1pdGFnamlvbnB3ZXVzY2puY2loIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4NjY1ODAsImV4cCI6MjA4NjQ0MjU4MH0.CFUkcwdKk9zC1Puh2TiL08sjteRE3r-z9c5Ex_V-87w";
 
-fetch(`${SUPABASE_URL}/rest/v1/chobes_snapshot?select=data,updated_at&limit=1`, {
-  headers: {apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}`}
-}).then(r => r.json()).then(rows => {
-  if (!rows.length) {
-    document.getElementById("content").innerHTML = "<p style='color:var(--text-mute);padding:24px'>No snapshot yet.</p>";
-    return;
+// Immediate visual state so user sees SOMETHING before the fetch resolves.
+document.getElementById("content").innerHTML = "<div class='boot-load'>Loading snapshot…</div>";
+
+// Fetch with a 20-second AbortController timeout + retry button on failure or
+// on render errors from initApp. Prior version silently failed if initApp
+// threw AFTER a successful fetch — user just saw an empty page with header.
+function bootFail(reason, err) {
+  const msg = (err && err.message) || String(err || "");
+  document.getElementById("content").innerHTML =
+    `<div class='boot-load boot-err'>
+       <div class='boot-err-title'>${reason}</div>
+       <div class='boot-err-msg'>${msg || "Unknown error"}</div>
+       <button class='boot-retry' onclick='location.reload()'>Retry</button>
+     </div>`;
+  document.getElementById("tabs").innerHTML = "";
+}
+(async () => {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20000);
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/chobes_snapshot?select=data,updated_at&limit=1`, {
+      headers: {apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}`},
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (!r.ok) { bootFail("Server returned " + r.status, await r.text()); return; }
+    const rows = await r.json();
+    if (!rows || !rows.length) {
+      document.getElementById("content").innerHTML = "<p style='color:var(--text-mute);padding:24px'>No snapshot yet.</p>";
+      return;
+    }
+    window.CHOBES_DATA = rows[0].data;
+    window.CHOBES_UPDATED = rows[0].updated_at;
+    try {
+      initApp(window.CHOBES_DATA);
+    } catch (renderErr) {
+      console.error("initApp threw:", renderErr);
+      bootFail("Render failed", renderErr);
+    }
+  } catch (fetchErr) {
+    console.error("fetch failed:", fetchErr);
+    bootFail(fetchErr.name === "AbortError" ? "Load timed out (20s)" : "Failed to load", fetchErr);
   }
-  window.CHOBES_DATA = rows[0].data;
-  window.CHOBES_UPDATED = rows[0].updated_at;
-  initApp(window.CHOBES_DATA);
-}).catch(err => {
-  document.getElementById("content").innerHTML = `<p style='color:var(--worst);padding:24px'>Failed to load: ${err.message}</p>`;
-});
+})();
 
 function initApp(DATA) {
   const MONTH_NAME_TABLE = {"Jan":"January","Feb":"February","Mar":"March","Apr":"April","May":"May","Jun":"June","Jul":"July","Aug":"August","Sep":"September","Oct":"October","Nov":"November","Dec":"December"};
@@ -433,17 +485,193 @@ function initApp(DATA) {
 
   // Persistent state for month tab (guard localStorage — sandboxed iframes throw)
   function safeStorageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+  function safeStorageSetGlobal(k, v) { try { localStorage.setItem(k, v); } catch {} }
+
+  // ── Change-over-past-N-days (global; applies to Monthly + Total tabs) ──
+  // User types N in the toolbar; we compute what each team's stats/points
+  // looked like as of (today - N days) and show delta chips. Powered by the
+  // same chobes_daily cache the Chart tab uses (fetched lazily, on first use).
+  let compareDays = parseInt(safeStorageGet("chobes_compare_days") || "", 10);
+  if (isNaN(compareDays) || compareDays <= 0) compareDays = 0;
+  let compareDailyCachePromise = null;
+  function loadCompareDailyCache() {
+    if (compareDailyCachePromise) return compareDailyCachePromise;
+    compareDailyCachePromise = (async () => {
+      const cache = {};
+      const PAGE = 1000; let offset = 0;
+      while (true) {
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/chobes_daily?select=team_key,date,stats&limit=${PAGE}&offset=${offset}&order=date.asc`,
+          { headers: {apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}`} });
+        const rows = await r.json();
+        for (const row of rows) {
+          cache[row.team_key] ??= {};
+          cache[row.team_key][row.date] = row.stats;
+        }
+        if (rows.length < PAGE) break;
+        offset += PAGE;
+      }
+      return cache;
+    })();
+    return compareDailyCachePromise;
+  }
+
+  // Aggregate daily stats over a date range → per-team totals + roto pts.
+  // Same math as ensureDailyTotalPts (Chart) and baseTotals (Total tab); kept
+  // separate so the "compare vs" delta computation doesn't fight for the
+  // per-range cache the chart uses.
+  function aggregateOverRange(cache, teamKeys, startDate, endDateInclusive) {
+    const cum = {};
+    for (const tk of teamKeys) cum[tk] = { r:0, hr:0, rbi:0, sb:0, k:0, w:0, sv:0, h:0, ab:0, e:0, ip_outs:0, er_num:0, wh_num:0 };
+    for (const tk of teamKeys) {
+      const days = cache[tk] || {};
+      for (const d of Object.keys(days)) {
+        if (d < startDate || d > endDateInclusive) continue;
+        const s = days[d]; if (!s) continue;
+        const c = cum[tk];
+        c.r += s.r || 0; c.hr += s.hr || 0; c.rbi += s.rbi || 0; c.sb += s.sb || 0;
+        c.k += s.k || 0; c.w += s.w || 0; c.sv += s.sv || 0;
+        c.h += s.h || 0; c.ab += s.ab || 0; c.ip_outs += s.ip_outs || 0;
+        if (s.obp != null && s.obp > 0 && s.obp < 1 && (s.ab || 0) > 0) {
+          const e = (s.obp * s.ab - s.h) / (1 - s.obp);
+          if (e > 0) c.e += e;
+        }
+        if (s.era != null && s.ip_outs > 0) c.er_num += s.era * (s.ip_outs / 3) / 9;
+        if (s.whip != null && s.ip_outs > 0) c.wh_num += s.whip * (s.ip_outs / 3);
+      }
+    }
+    const totals = {};
+    for (const tk of teamKeys) {
+      const c = cum[tk];
+      const ip = c.ip_outs / 3;
+      totals[tk] = {
+        r: c.r, hr: c.hr, rbi: c.rbi, sb: c.sb,
+        w: c.w, sv: c.sv, k: c.k,
+        ip_outs: c.ip_outs,
+        obp: (c.ab + c.e) > 0 ? (c.h + c.e) / (c.ab + c.e) : 0,
+        era: ip > 0 ? c.er_num * 9 / ip : 0,
+        whip: ip > 0 ? c.wh_num / ip : 0,
+      };
+    }
+    const CATS_HIGH = ["r","hr","rbi","sb","obp","w","sv","k"];
+    const CATS_LOW  = ["era","whip"];
+    const pts = {};
+    for (const tk of teamKeys) pts[tk] = {};
+    const rank = (cat, ascending) => {
+      const arr = teamKeys.map(tk => ({ tk, v: totals[tk][cat] ?? 0 })).sort((a,b) => ascending ? a.v - b.v : b.v - a.v);
+      let i = 0;
+      while (i < arr.length) {
+        let j = i;
+        while (j+1 < arr.length && arr[j+1].v === arr[i].v) j++;
+        const avgRank = (i + 1 + j + 1) / 2;
+        for (let k = i; k <= j; k++) pts[arr[k].tk][cat + "_pts"] = avgRank;
+        i = j + 1;
+      }
+    };
+    for (const c of CATS_HIGH) rank(c, true);
+    for (const c of CATS_LOW)  rank(c, false);
+    for (const tk of teamKeys) pts[tk].total_pts = [...CATS_HIGH, ...CATS_LOW].reduce((s,c) => s + (pts[tk][c + "_pts"] || 0), 0);
+    return { totals, pts };
+  }
+
+  // Given a rendered tab's start date, produce the compare snapshot (as-of
+  // today − compareDays days) if the user has set it. Returns { totals, pts }
+  // keyed by team_key, or null when no compare or no cache yet.
+  const compareCache = new Map();   // range key → { totals, pts }
+  async function ensureCompareSnapshot(startDate) {
+    if (!compareDays || compareDays <= 0) return null;
+    const dt = new Date(); dt.setUTCDate(dt.getUTCDate() - compareDays);
+    const cutoff = dt.toISOString().slice(0, 10);
+    if (cutoff < startDate) return { totals: {}, pts: {}, cutoff };
+    const key = `${startDate}_${cutoff}`;
+    if (compareCache.has(key)) return { ...compareCache.get(key), cutoff };
+    const cache = await loadCompareDailyCache();
+    const teamKeys = Object.keys(cache);
+    const agg = aggregateOverRange(cache, teamKeys, startDate, cutoff);
+    compareCache.set(key, agg);
+    return { ...agg, cutoff };
+  }
+  function invalidateCompareCache() {
+    compareCache.clear();
+  }
+  function deltaChip(now, before, opts) {
+    if (before == null || now == null) return "";
+    const d = now - before;
+    if (Math.abs(d) < (opts?.epsilon ?? 0.001)) return `<span class="delta-chip flat">±0</span>`;
+    const cls = d > 0 ? "up" : "down";
+    // For rate stats where LOW is better (era, whip), we still show numeric
+    // sign; user interprets +ERA as bad. Keep semantics simple: sign is math.
+    const decimals = opts?.decimals ?? 0;
+    const sign = d > 0 ? "+" : "";
+    return `<span class="delta-chip ${cls}">${sign}${d.toFixed(decimals)}</span>`;
+  }
+  function ratedelta(cat, now, before) {
+    if (before == null || now == null) return "";
+    const d = now - before;
+    if (Math.abs(d) < 0.0005) return `<span class="delta-chip flat">±0</span>`;
+    // For low-is-better stats (era, whip), flip color: lower now → improvement
+    let cls = d > 0 ? "up" : "down";
+    if (cat === "era" || cat === "whip") cls = d > 0 ? "down" : "up";
+    const sign = d > 0 ? "+" : "";
+    return `<span class="delta-chip ${cls}">${sign}${d.toFixed(cat === "obp" ? 3 : 2)}</span>`;
+  }
+  function ptsDelta(now, before) {
+    if (before == null || now == null) return "";
+    const d = now - before;
+    if (Math.abs(d) < 0.05) return `<span class="delta-chip flat">±0</span>`;
+    const cls = d > 0 ? "up" : "down";
+    const sign = d > 0 ? "+" : "";
+    return `<span class="delta-chip ${cls}">${sign}${d.toFixed(1)}</span>`;
+  }
+  function renderChangeToolbar(container, opts) {
+    const today = new Date().toISOString().slice(0, 10);
+    const cutoffPreview = compareDays > 0
+      ? (() => { const dt = new Date(); dt.setUTCDate(dt.getUTCDate() - compareDays); return dt.toISOString().slice(0,10); })()
+      : "";
+    const html = `<div class="change-toolbar">
+      <label>Change over past <input type="number" id="change-days" step="1" min="0" max="365" placeholder="e.g. 7" value="${compareDays > 0 ? compareDays : ""}"> days</label>
+      ${compareDays > 0 ? `<button class="change-clear" id="change-clear">clear</button>` : ""}
+      <div class="cutoff-lab">${compareDays > 0 ? `comparing ${today} vs ${cutoffPreview}` : "type a number to compare"}</div>
+    </div>`;
+    container.insertAdjacentHTML("afterbegin", html);
+    const inp = container.querySelector("#change-days");
+    inp.addEventListener("change", (e) => {
+      const v = parseInt(e.target.value, 10);
+      compareDays = (isNaN(v) || v <= 0) ? 0 : Math.min(365, v);
+      safeStorageSetGlobal("chobes_compare_days", String(compareDays));
+      invalidateCompareCache();
+      if (typeof opts?.onChange === "function") opts.onChange();
+    });
+    const clr = container.querySelector("#change-clear");
+    if (clr) clr.addEventListener("click", () => {
+      compareDays = 0;
+      safeStorageSetGlobal("chobes_compare_days", "0");
+      invalidateCompareCache();
+      if (typeof opts?.onChange === "function") opts.onChange();
+    });
+  }
   function safeStorageSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
   let monthViewMode = safeStorageGet("chobes_view_mode") || "both";  // "stats" | "points" | "both"
   let monthSort = { key: "total_pts", dir: "desc" };  // sort by total roto pts desc by default
 
   function renderMonth(m) {
     contentEl.innerHTML = "";
+    // Compare-over-past-N-days global toolbar (top of every tab).
+    renderChangeToolbar(contentEl, { onChange: () => renderMonth(m) });
     const n = monthNote(m);
     if (n) { noteEl.textContent = n; noteEl.hidden = false; } else noteEl.hidden = true;
 
     const teams = DATA.months[m].teams.slice();
     const N = teams.length;
+
+    // Async load the compare-snapshot for THIS bucket's start. When it lands
+    // we patch delta chips in without a full DOM rebuild.
+    let compareSnap = null;
+    if (compareDays > 0) {
+      ensureCompareSnapshot(DATA.months[m].start).then(snap => {
+        compareSnap = snap;
+        renderTable();
+      }).catch(e => console.error("compare load failed:", e));
+    }
 
     // Monthly tabs: no simulator. Just read t.totals / t.pts directly.
     const effectiveTotals = t => t.totals;
@@ -525,28 +753,53 @@ function initApp(DATA) {
         `<th class="${c.sort ? 'sortable' : ''} ${c.strong?'strong':''} ${c.type==='stat'?'stat-col':''} ${c.type==='pts'?'pts-col':''}" data-sort="${c.sort||''}">${c.lab} ${arrow(c)}</th>`
       ).join("") + "</tr>";
 
+      // NOW versus THEN maps (only populated when compareSnap is available).
+      // "then" = as-of-(today − compareDays) cumulative up to this bucket's
+      // start; delta = now − then, per stat and per team's total_pts.
+      const before = (compareSnap && compareSnap.totals) ? compareSnap.totals : null;
+      const beforePts = (compareSnap && compareSnap.pts) ? compareSnap.pts : null;
+
       const tbody = teams.map(t => {
         const r = rank.get(t.team_key);
         const rankCls = r === 1 ? "best" : (r === N ? "worst" : "");
+        const bt = before ? (before[t.team_key] || null) : null;
+        const bp = beforePts ? (beforePts[t.team_key] || null) : null;
+        const catNowRaw = (cat) => cat === "k9"
+          ? (t.totals.ip_outs > 0 ? (t.totals.k * 9) / (t.totals.ip_outs / 3) : 0)
+          : t.totals[cat] ?? 0;
+        const catBeforeRaw = (cat) => bt == null ? null
+          : (cat === "k9"
+              ? (bt.ip_outs > 0 ? (bt.k * 9) / (bt.ip_outs / 3) : 0)
+              : bt[cat] ?? 0);
+        const isRate = (cat) => cat === "obp" || cat === "era" || cat === "whip" || cat === "k9";
+        const chipFor = (cat) => {
+          if (bt == null) return "";
+          const nowV = catNowRaw(cat), beforeV = catBeforeRaw(cat);
+          return isRate(cat) ? ratedelta(cat, nowV, beforeV) : deltaChip(nowV, beforeV, {decimals:0});
+        };
+        const ptsChipFor = (cat) => bp == null ? "" : ptsDelta(t.pts[cat+"_pts"] || 0, bp[cat+"_pts"] || 0);
         const cells = cols.map(c => {
           if (c.key === "rank") return `<td class="rank ${rankCls}">${r}</td>`;
           if (c.key === "team_name") return `<td class="team-name-cell">${esc(t.team_name)}</td>`;
-          if (c.key === "total_pts") return `<td class="strong">${effectivePts(t).total_pts}</td>`;
+          if (c.key === "total_pts") {
+            const totChip = bp ? ptsDelta(t.pts.total_pts, bp.total_pts || 0) : "";
+            return `<td class="strong"><span class="delta-cell">${effectivePts(t).total_pts}${totChip}</span></td>`;
+          }
           if (c.unscored) {
-            return `<td class="stat-cell unscored" title="Not scored">${catValFor(c.cat, t)}</td>`;
+            return `<td class="stat-cell unscored" title="Not scored"><span class="delta-cell">${catValFor(c.cat, t)}${chipFor(c.cat)}</span></td>`;
           }
           if (c.type === "pts") {
             const p = effectivePts(t)[c.cat + "_pts"] || 0;
             const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
-            return `<td class="pts-cell ${cls}">${p}</td>`;
+            return `<td class="pts-cell ${cls}"><span class="delta-cell">${p}${ptsChipFor(c.cat)}</span></td>`;
           }
           if (c.type === "both") {
             const p = effectivePts(t)[c.cat + "_pts"] || 0;
             const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
-            return `<td class="both-cell"><span class="stat-val">${catValFor(c.cat, t)}</span><span class="both-sep">/</span><span class="pts-val ${cls}">${p}</span></td>`;
+            return `<td class="both-cell"><span class="stat-val">${catValFor(c.cat, t)}${chipFor(c.cat)}</span><span class="both-sep">/</span><span class="pts-val ${cls}">${p}${ptsChipFor(c.cat)}</span></td>`;
           }
           // stat
-          return `<td class="stat-cell">${catValFor(c.cat, t)}</td>`;
+          return `<td class="stat-cell"><span class="delta-cell">${catValFor(c.cat, t)}${chipFor(c.cat)}</span></td>`;
         }).join("");
         return `<tr>${cells}</tr>`;
       }).join("");
@@ -617,6 +870,12 @@ function initApp(DATA) {
     noteEl.hidden = true;
     contentEl.innerHTML = `<div class="loading">Loading season totals…</div>`;
     const cache = await loadDailyCache();
+    // Compare snapshot for Total tab is season-start → (today - N days).
+    let totalCompareSnap = null;
+    if (compareDays > 0) {
+      const seasonStart = DATA.months[months[0]].start;
+      totalCompareSnap = await ensureCompareSnapshot(seasonStart).catch(e => { console.error(e); return null; });
+    }
 
     // Team roster: last month has all 12 in it (some teams may drop out earlier).
     const teamMeta = {};
@@ -712,6 +971,8 @@ function initApp(DATA) {
     }
 
     contentEl.innerHTML = "";
+    // Global "change over past N days" input.
+    renderChangeToolbar(contentEl, { onChange: () => renderTotal() });
 
     // Toolbar: IP input + cap-only checkbox + view toggle + reset
     const toolbar = document.createElement("div");
@@ -777,9 +1038,23 @@ function initApp(DATA) {
       ).join("") + "</tr>";
 
       const projected = totalSimIP != null && !isNaN(totalSimIP) && totalSimIP > 0;
+      const beforeT = (totalCompareSnap && totalCompareSnap.totals) ? totalCompareSnap.totals : null;
+      const beforeP = (totalCompareSnap && totalCompareSnap.pts) ? totalCompareSnap.pts : null;
       const tbody = teams.map(t => {
         const r = rankMap.get(t.team_key);
         const rankCls = r === 1 ? "best" : (r === N ? "worst" : "");
+        const bt = beforeT ? (beforeT[t.team_key] || null) : null;
+        const bp = beforeP ? (beforeP[t.team_key] || null) : null;
+        const isRate = (cat) => cat === "obp" || cat === "era" || cat === "whip" || cat === "k9";
+        const catNow = (cat) => cat === "k9"
+          ? (t.totals.ip_outs > 0 ? (t.totals.k * 9) / (t.totals.ip_outs / 3) : 0)
+          : t.totals[cat] ?? 0;
+        const catBefore = (cat) => bt == null ? null
+          : (cat === "k9"
+              ? (bt.ip_outs > 0 ? (bt.k * 9) / (bt.ip_outs / 3) : 0)
+              : bt[cat] ?? 0);
+        const chipFor = (cat) => bt == null ? "" : (isRate(cat) ? ratedelta(cat, catNow(cat), catBefore(cat)) : deltaChip(catNow(cat), catBefore(cat), {decimals:0}));
+        const ptsChipFor = (cat) => bp == null ? "" : ptsDelta(t.pts[cat+"_pts"] || 0, bp[cat+"_pts"] || 0);
         const cells = cols.map(c => {
           if (c.key === "rank") return `<td class="rank ${rankCls}">${r}</td>`;
           if (c.key === "team_name") {
@@ -792,19 +1067,22 @@ function initApp(DATA) {
             }
             return `<td class="team-name-cell">${esc(t.team_name)}${mark}</td>`;
           }
-          if (c.key === "total_pts") return `<td class="strong">${t.pts.total_pts}</td>`;
-          if (c.unscored) return `<td class="stat-cell unscored" title="Not scored">${catVal(c.cat, t.totals)}</td>`;
+          if (c.key === "total_pts") {
+            const totChip = bp ? ptsDelta(t.pts.total_pts, bp.total_pts || 0) : "";
+            return `<td class="strong"><span class="delta-cell">${t.pts.total_pts}${totChip}</span></td>`;
+          }
+          if (c.unscored) return `<td class="stat-cell unscored" title="Not scored"><span class="delta-cell">${catVal(c.cat, t.totals)}${chipFor(c.cat)}</span></td>`;
           if (c.type === "pts") {
             const p = t.pts[c.cat + "_pts"] || 0;
             const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
-            return `<td class="pts-cell ${cls}">${p}</td>`;
+            return `<td class="pts-cell ${cls}"><span class="delta-cell">${p}${ptsChipFor(c.cat)}</span></td>`;
           }
           if (c.type === "both") {
             const p = t.pts[c.cat + "_pts"] || 0;
             const cls = p >= N - 2 ? "pts-high" : (p <= 3 ? "pts-low" : "");
-            return `<td class="both-cell"><span class="stat-val">${catVal(c.cat, t.totals)}</span><span class="both-sep">/</span><span class="pts-val ${cls}">${p}</span></td>`;
+            return `<td class="both-cell"><span class="stat-val">${catVal(c.cat, t.totals)}${chipFor(c.cat)}</span><span class="both-sep">/</span><span class="pts-val ${cls}">${p}${ptsChipFor(c.cat)}</span></td>`;
           }
-          return `<td class="stat-cell">${catVal(c.cat, t.totals)}</td>`;
+          return `<td class="stat-cell"><span class="delta-cell">${catVal(c.cat, t.totals)}${chipFor(c.cat)}</span></td>`;
         }).join("");
         return `<tr>${cells}</tr>`;
       }).join("");
