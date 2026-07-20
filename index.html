@@ -814,7 +814,8 @@ function initApp(DATA) {
             monthSort.dir = monthSort.dir === "asc" ? "desc" : "asc";
           } else {
             monthSort.key = k;
-            monthSort.dir = k === "team_name" ? "asc" : "desc";
+            // WHIP/ERA: lower is better, so first click sorts ascending
+            monthSort.dir = (k === "team_name" || k === "whip" || k === "era") ? "asc" : "desc";
           }
           renderTable();
         });
@@ -1097,7 +1098,7 @@ function initApp(DATA) {
         th.addEventListener("click", () => {
           const k = th.getAttribute("data-sort");
           if (totalSort.key === k) totalSort.dir = totalSort.dir === "asc" ? "desc" : "asc";
-          else { totalSort.key = k; totalSort.dir = k === "team_name" ? "asc" : "desc"; }
+          else { totalSort.key = k; totalSort.dir = (k === "team_name" || k === "whip" || k === "era") ? "asc" : "desc"; }
           render();
         });
       });
