@@ -886,14 +886,29 @@ function initApp(DATA) {
     const teamKeys = Object.keys(cache).filter(tk => teamMeta[tk]);
     const dateArr = [...new Set(teamKeys.flatMap(tk => Object.keys(cache[tk])))].sort();
 
-    // Accumulate raw components across all dates. (Same math as ensureDailyTotalPts final row.)
+    // Accumulate raw components across all dates. Counting stats come from
+    // summing monthly bucket totals (which are chart-authoritative — match
+    // Yahoo's standings page). Rate stat components still come from daily
+    // per-team API since the chart doesn't expose H/AB/IP_OUTS separately.
     const cum = {};
     for (const tk of teamKeys) cum[tk] = { r:0, hr:0, rbi:0, sb:0, k:0, w:0, sv:0, h:0, ab:0, e:0, ip_outs:0, er_num:0, wh_num:0 };
+
+    // Counting stats: sum monthly bucket totals (chart-derived, matches Yahoo)
+    for (const m of Object.keys(DATA.months)) {
+      for (const t of DATA.months[m].teams) {
+        const c = cum[t.team_key];
+        if (!c) continue;
+        const tot = t.totals || {};
+        c.r  += tot.r  || 0; c.hr += tot.hr || 0;
+        c.rbi+= tot.rbi|| 0; c.sb += tot.sb || 0;
+        c.k  += tot.k  || 0; c.w  += tot.w  || 0; c.sv += tot.sv || 0;
+      }
+    }
+
+    // Rate stat components: sum daily per-team API values (only source with H/AB/IP)
     for (const d of dateArr) for (const tk of teamKeys) {
       const s = cache[tk][d] || {};
       const c = cum[tk];
-      c.r += s.r || 0; c.hr += s.hr || 0; c.rbi += s.rbi || 0; c.sb += s.sb || 0;
-      c.k += s.k || 0; c.w += s.w || 0; c.sv += s.sv || 0;
       c.h += s.h || 0; c.ab += s.ab || 0; c.ip_outs += s.ip_outs || 0;
       if (s.obp != null && s.obp > 0 && s.obp < 1 && (s.ab || 0) > 0) {
         const e = (s.obp * s.ab - s.h) / (1 - s.obp);
