@@ -964,11 +964,31 @@ function initApp(DATA) {
     }
 
     // Compute roto points across all 12 teams for the projected totals.
+    // When NOT projecting IP and season_standings is present in snapshot,
+    // prefer Yahoo's authoritative pf/rank values (exact match to Yahoo
+    // Overall Points page — no chart-derived OBP tie drift).
     function computePts() {
       const CATS_HIGH = ["r","hr","rbi","sb","obp","w","sv","k"];
       const CATS_LOW  = ["era","whip"];
       const vals = {}; const pts = {};
       for (const tk of teamKeys) { vals[tk] = projectedTotals(tk); pts[tk] = {}; }
+      const useYahoo = (totalSimIP == null || isNaN(totalSimIP) || totalSimIP <= 0)
+        && Array.isArray(DATA.season_standings) && DATA.season_standings.length > 0;
+      if (useYahoo) {
+        const byTk = {};
+        for (const s of DATA.season_standings) byTk[s.team_key] = s;
+        for (const tk of teamKeys) {
+          const s = byTk[tk]; if (!s) continue;
+          const p = s.pts || {};
+          pts[tk] = {
+            r_pts: p.r_pts, hr_pts: p.hr_pts, rbi_pts: p.rbi_pts, sb_pts: p.sb_pts,
+            obp_pts: p.obp_pts, w_pts: p.w_pts, sv_pts: p.sv_pts, k_pts: p.k_pts,
+            era_pts: p.era_pts, whip_pts: p.whip_pts,
+            total_pts: s.pf,
+          };
+        }
+        return { vals, pts };
+      }
       const rank = (cat, ascending) => {
         const arr = teamKeys.map(tk => ({ tk, v: vals[tk][cat] ?? 0 })).sort((a,b) => ascending ? a.v - b.v : b.v - a.v);
         let i = 0;
