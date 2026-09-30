@@ -1206,7 +1206,7 @@ function initApp(DATA) {
         <div class="pay-card">
           <div class="lab">Completed months</div>
           <div class="val">${completedMonths.length} paid · $${completedMonths.length * 30} total flow</div>
-          <div class="note">$10 last → 2nd-best, $20 2nd-last → best. Peer-to-peer, sums to zero.</div>
+          <div class="note">$20 last → best, $10 2nd-last → 2nd-best. Peer-to-peer, sums to zero.</div>
         </div>
         <div class="pay-card">
           <div class="lab">Biggest net gain</div>
@@ -1220,21 +1220,23 @@ function initApp(DATA) {
         </div>
       </div>
       <div class="pay-rules">
-        <b>Monthly rules:</b> <span class="money-neg">last</span> pays $10 to <span class="money-pos">2nd-best</span>; <span class="money-neg">2nd-last</span> pays $20 to <span class="money-pos">best</span>. Ties split incoming payments equally.
+        <b>Monthly rules:</b> <span class="money-neg">last</span> pays $20 to <span class="money-pos">best</span>; <span class="money-neg">2nd-last</span> pays $10 to <span class="money-pos">2nd-best</span>. Ties split incoming payments equally.
       </div>
     `;
 
     // Compute flows for a single month
     function monthFlows(md) {
       const flows = [];
-      if (md.losers.length && md.second_bests.length) {
-        for (const loser of md.losers) for (const winner of md.second_bests) {
-          flows.push({from: loser, to: winner, amount: 10 / (md.losers.length * md.second_bests.length)});
+      // LAST pays $20 and it goes to the month's BEST. 2ND-LAST pays $10 and it
+      // goes to 2ND-BEST. These two amounts were swapped until 2026-09-30.
+      if (md.losers.length && md.bests.length) {
+        for (const loser of md.losers) for (const winner of md.bests) {
+          flows.push({from: loser, to: winner, amount: 20 / (md.losers.length * md.bests.length)});
         }
       }
-      if (md.second_losers.length && md.bests.length) {
-        for (const loser of md.second_losers) for (const winner of md.bests) {
-          flows.push({from: loser, to: winner, amount: 20 / (md.second_losers.length * md.bests.length)});
+      if (md.second_losers.length && md.second_bests.length) {
+        for (const loser of md.second_losers) for (const winner of md.second_bests) {
+          flows.push({from: loser, to: winner, amount: 10 / (md.second_losers.length * md.second_bests.length)});
         }
       }
       // Aggregate duplicates (same from → to)
@@ -1264,7 +1266,7 @@ function initApp(DATA) {
         </div>
       `).join("");
       const tieNote = (md.ties.best || md.ties.second_best || md.ties.worst || md.ties.second_worst)
-        ? `<div class="pay-tie">⚠ ${md.ties.worst ? `Tie at WORST — $10 split ${md.losers.length} ways. ` : ""}${md.ties.second_worst ? `Tie at 2ND-WORST — $20 split. ` : ""}${md.ties.best ? `Tie at BEST — $20 in split ${md.bests.length} ways. ` : ""}${md.ties.second_best ? `Tie at 2ND-BEST — $10 in split ${md.second_bests.length} ways.` : ""}</div>`
+        ? `<div class="pay-tie">⚠ ${md.ties.worst ? `Tie at WORST — $20 split ${md.losers.length} ways. ` : ""}${md.ties.second_worst ? `Tie at 2ND-WORST — $10 split. ` : ""}${md.ties.best ? `Tie at BEST — $20 in split ${md.bests.length} ways. ` : ""}${md.ties.second_best ? `Tie at 2ND-BEST — $10 in split ${md.second_bests.length} ways.` : ""}</div>`
         : "";
       const liveBadge = isLive ? ' <span style="color:var(--warn);font:600 11px/1 var(--mono);letter-spacing:0.1em;margin-left:8px">● LIVE · projected</span>' : "";
       const liveNote = isLive ? `<div class="pay-tie" style="border-left-color:var(--warn); background:rgba(255,180,74,0.08); color:var(--text-dim)">If ${monthLabel(m)} ended today, these are the payments. Standings can still shift.</div>` : "";
